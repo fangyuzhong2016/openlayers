@@ -165,7 +165,7 @@ export function containsXY(extent, x, y) {
  * Get the relationship between a coordinate and extent.
  * @param {Extent} extent The extent.
  * @param {import("./coordinate.js").Coordinate} coordinate The coordinate.
- * @return {import("./extent/Relationship.js").default} The relationship (bitwise compare with
+ * @return {Relationship} The relationship (bitwise compare with
  *     import("./extent/Relationship.js").Relationship).
  */
 export function coordinateRelationship(extent, coordinate) {
@@ -400,26 +400,25 @@ export function extendXY(extent, x, y) {
  * callback returns a truthy value the function returns that value
  * immediately. Otherwise the function returns `false`.
  * @param {Extent} extent Extent.
- * @param {function(this:T, import("./coordinate.js").Coordinate): S} callback Callback.
- * @param {T=} opt_this Value to use as `this` when executing `callback`.
+ * @param {function(import("./coordinate.js").Coordinate): S} callback Callback.
  * @return {S|boolean} Value.
- * @template S, T
+ * @template S
  */
-export function forEachCorner(extent, callback, opt_this) {
+export function forEachCorner(extent, callback) {
   let val;
-  val = callback.call(opt_this, getBottomLeft(extent));
+  val = callback(getBottomLeft(extent));
   if (val) {
     return val;
   }
-  val = callback.call(opt_this, getBottomRight(extent));
+  val = callback(getBottomRight(extent));
   if (val) {
     return val;
   }
-  val = callback.call(opt_this, getTopRight(extent));
+  val = callback(getTopRight(extent));
   if (val) {
     return val;
   }
-  val = callback.call(opt_this, getTopLeft(extent));
+  val = callback(getTopLeft(extent));
   if (val) {
     return val;
   }
@@ -478,7 +477,7 @@ export function getCenter(extent) {
 /**
  * Get a corner coordinate of an extent.
  * @param {Extent} extent Extent.
- * @param {import("./extent/Corner.js").default} corner Corner.
+ * @param {Corner} corner Corner.
  * @return {import("./coordinate.js").Coordinate} Corner coordinate.
  */
 export function getCorner(extent, corner) {
@@ -494,9 +493,7 @@ export function getCorner(extent, corner) {
   } else {
     assert(false, 13); // Invalid corner
   }
-  return (
-    /** @type {!import("./coordinate.js").Coordinate} */ (coordinate)
-  );
+  return coordinate;
 }
 
 

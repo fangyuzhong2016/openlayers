@@ -3,10 +3,9 @@
  */
 import {listen, unlistenByKey} from '../events.js';
 import EventType from '../events/EventType.js';
-import {getUid} from '../util.js';
 import {getChangeEventType} from '../Object.js';
-import BaseLayer from '../layer/Base.js';
-import LayerProperty from '../layer/Property.js';
+import BaseLayer from './Base.js';
+import LayerProperty from './Property.js';
 import {assign} from '../obj.js';
 import RenderEventType from '../render/EventType.js';
 import SourceState from '../source/State.js';
@@ -29,14 +28,15 @@ import SourceState from '../source/State.js';
  * @property {import("../source/Source.js").default} [source] Source for this layer.  If not provided to the constructor,
  * the source can be set by calling {@link module:ol/layer/Layer#setSource layer.setSource(source)} after
  * construction.
+ * @property {import("../PluggableMap.js").default} [map] Map.
  */
 
 
 /**
  * @typedef {Object} State
- * @property {import("./Layer.js").default} layer
- * @property {number} opacity
- * @property {import("../source/Source.js").State} sourceState
+ * @property {import("./Base.js").default} layer
+ * @property {number} opacity Opacity, the value is rounded to two digits to appear after the decimal point.
+ * @property {SourceState} sourceState
  * @property {boolean} visible
  * @property {boolean} managed
  * @property {import("../extent.js").Extent} [extent]
@@ -60,7 +60,10 @@ import SourceState from '../source/State.js';
  *
  * A generic `change` event is fired when the state of the source changes.
  *
- * @fires import("../render/Event.js").RenderEvent
+ * @fires import("../render/Event.js").RenderEvent#prerender
+ * @fires import("../render/Event.js").RenderEvent#postrender
+ *
+ * @template {import("../source/Source.js").default} SourceType
  */
 class Layer extends BaseLayer {
   /**
@@ -91,6 +94,12 @@ class Layer extends BaseLayer {
      */
     this.sourceChangeKey_ = null;
 
+    /**
+     * @private
+     * @type {import("../renderer/Layer.js").default}
+     */
+    this.renderer_ = null;
+
     if (options.map) {
       this.setMap(options.map);
     }
@@ -99,7 +108,7 @@ class Layer extends BaseLayer {
       getChangeEventType(LayerProperty.SOURCE),
       this.handleSourcePropertyChange_, this);
 
-    const source = options.source ? options.source : null;
+    const source = options.source ? /** @type {SourceType} */ (options.source) : null;
     this.setSource(source);
   }
 
@@ -123,15 +132,12 @@ class Layer extends BaseLayer {
 
   /**
    * Get the layer source.
-   * @return {import("../source/Source.js").default} The layer source (or `null` if not yet set).
+   * @return {SourceType} The layer source (or `null` if not yet set).
    * @observable
    * @api
    */
   getSource() {
-    const source = this.get(LayerProperty.SOURCE);
-    return (
-      /** @type {import("../source/Source.js").default} */ (source) || null
-    );
+    return /** @type {SourceType} */ (this.get(LayerProperty.SOURCE)) || null;
   }
 
   /**
@@ -166,6 +172,20 @@ class Layer extends BaseLayer {
   }
 
   /**
+   * In charge to manage the rendering of the layer. One layer type is
+   * bounded with one layer renderer.
+   * @param {?import("../PluggableMap.js").FrameState} frameState Frame state.
+   * @return {HTMLElement} The rendered element.
+   */
+  render(frameState) {
+    const layerRenderer = this.getRenderer();
+    const layerState = this.getLayerState();
+    if (layerRenderer.prepareFrame(frameState, layerState)) {
+      return layerRenderer.renderFrame(frameState, layerState);
+    }
+  }
+
+  /**
    * Sets the layer to be rendered on top of other layers on a map. The map will
    * not manage this layer in its layers collection, and the callback in
    * {@link module:ol/Map#forEachLayerAtPixel} will receive `null` as layer. This
@@ -191,13 +211,13 @@ class Layer extends BaseLayer {
     }
     if (map) {
       this.mapPrecomposeKey_ = listen(map, RenderEventType.PRECOMPOSE, function(evt) {
+        const renderEvent = /** @type {import("../render/Event.js").default} */ (evt);
         const layerState = this.getLayerState();
         layerState.managed = false;
         if (this.getZIndex() === undefined) {
           layerState.zIndex = Infinity;
         }
-        evt.frameState.layerStatesArray.push(layerState);
-        evt.frameState.layerStates[getUid(this)] = layerState;
+        renderEvent.frameState.layerStatesArray.push(layerState);
       }, this);
       this.mapRenderKey_ = listen(this, EventType.CHANGE, map.render, map);
       this.changed();
@@ -206,13 +226,34 @@ class Layer extends BaseLayer {
 
   /**
    * Set the layer source.
-   * @param {import("../source/Source.js").default} source The layer source.
+   * @param {SourceType} source The layer source.
    * @observable
    * @api
    */
   setSource(source) {
     this.set(LayerProperty.SOURCE, source);
   }
+
+  /**
+   * Get the renderer for this layer.
+   * @return {import("../renderer/Layer.js").default} The layer renderer.
+   */
+  getRenderer() {
+    if (!this.renderer_) {
+      this.renderer_ = this.createRenderer();
+    }
+    return this.renderer_;
+  }
+
+  /**
+   * Create a renderer for this layer.
+   * @return {import("../renderer/Layer.js").default} A layer renderer.
+   * @protected
+   */
+  createRenderer() {
+    return null;
+  }
+
 }
 
 

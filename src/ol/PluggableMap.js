@@ -19,7 +19,6 @@ import ViewHint from './ViewHint.js';
 import {assert} from './asserts.js';
 import {removeNode} from './dom.js';
 import {listen, unlistenByKey, unlisten} from './events.js';
-import {stopPropagation} from './events/Event.js';
 import EventType from './events/EventType.js';
 import {createEmpty, clone, createOrUpdateEmpty, equals, getForViewAndSize, isEmpty} from './extent.js';
 import {TRUE} from './functions.js';
@@ -42,43 +41,41 @@ import {create as createTransform, apply as applyTransform} from './transform.js
  * @property {null|import("./extent.js").Extent} extent
  * @property {import("./coordinate.js").Coordinate} focus
  * @property {number} index
- * @property {Object<number, import("./layer/Layer.js").State>} layerStates
  * @property {Array<import("./layer/Layer.js").State>} layerStatesArray
  * @property {import("./transform.js").Transform} pixelToCoordinateTransform
  * @property {Array<PostRenderFunction>} postRenderFunctions
  * @property {import("./size.js").Size} size
  * @property {!Object<string, boolean>} skippedFeatureUids
- * @property {import("./TileQueue.js").default} tileQueue
- * @property {Object<string, Object<string, import("./TileRange.js").default>>} usedTiles
+ * @property {TileQueue} tileQueue
+ * @property {!Object<string, Object<string, boolean>>} usedTiles
  * @property {Array<number>} viewHints
  * @property {!Object<string, Object<string, boolean>>} wantedTiles
  */
 
 
 /**
- * @typedef {function(PluggableMap, ?FrameState): boolean} PostRenderFunction
+ * @typedef {function(PluggableMap, ?FrameState): any} PostRenderFunction
  */
 
 
 /**
  * @typedef {Object} AtPixelOptions
- * @property {undefined|function(import("./layer/Layer.js").default): boolean} layerFilter Layer filter
+ * @property {undefined|function(import("./layer/Layer.js").default): boolean} [layerFilter] Layer filter
  * function. The filter function will receive one argument, the
  * {@link module:ol/layer/Layer layer-candidate} and it should return a boolean value.
  * Only layers which are visible and for which this function returns `true`
  * will be tested for features. By default, all visible layers will be tested.
  * @property {number} [hitTolerance=0] Hit-detection tolerance in pixels. Pixels
- * inside the radius around the given position will be checked for features. This only
- * works for the canvas renderer and not for WebGL.
+ * inside the radius around the given position will be checked for features.
  */
 
 
 /**
  * @typedef {Object} MapOptionsInternal
- * @property {import("./Collection.js").default<import("./control/Control.js").default>} [controls]
- * @property {import("./Collection.js").default<import("./interaction/Interaction.js").default>} [interactions]
+ * @property {Collection<import("./control/Control.js").default>} [controls]
+ * @property {Collection<import("./interaction/Interaction.js").default>} [interactions]
  * @property {HTMLElement|Document} keyboardEventTarget
- * @property {import("./Collection.js").default<import("./Overlay.js").default>} overlays
+ * @property {Collection<import("./Overlay.js").default>} overlays
  * @property {Object<string, *>} values
  */
 
@@ -86,12 +83,12 @@ import {create as createTransform, apply as applyTransform} from './transform.js
 /**
  * Object literal with config options for the map.
  * @typedef {Object} MapOptions
- * @property {import("./Collection.js").default<import("./control/Control.js").default>|Array<import("./control/Control.js").default>} [controls]
+ * @property {Collection<import("./control/Control.js").default>|Array<import("./control/Control.js").default>} [controls]
  * Controls initially added to the map. If not specified,
- * {@link module:ol/control/util~defaults} is used.
+ * {@link module:ol/control~defaults} is used.
  * @property {number} [pixelRatio=window.devicePixelRatio] The ratio between
  * physical pixels and device-independent pixels (dips) on the device.
- * @property {import("./Collection.js").default<import("./interaction/Interaction.js").default>|Array<import("./interaction/Interaction.js").default>} [interactions]
+ * @property {Collection<import("./interaction/Interaction.js").default>|Array<import("./interaction/Interaction.js").default>} [interactions]
  * Interactions that are initially added to the map. If not specified,
  * {@link module:ol/interaction~defaults} is used.
  * @property {HTMLElement|Document|string} [keyboardEventTarget] The element to
@@ -102,30 +99,23 @@ import {create as createTransform, apply as applyTransform} from './transform.js
  * map target (i.e. the user-provided div for the map). If this is not
  * `document`, the target element needs to be focused for key events to be
  * emitted, requiring that the target element has a `tabindex` attribute.
- * @property {Array<import("./layer/Base.js").default>|import("./Collection.js").default<import("./layer/Base.js").default>} [layers]
+ * @property {Array<import("./layer/Base.js").default>|Collection<import("./layer/Base.js").default>|LayerGroup} [layers]
  * Layers. If this is not defined, a map with no layers will be rendered. Note
  * that layers are rendered in the order supplied, so if you want, for example,
  * a vector layer to appear on top of a tile layer, it must come after the tile
  * layer.
  * @property {number} [maxTilesLoading=16] Maximum number tiles to load
  * simultaneously.
- * @property {boolean} [loadTilesWhileAnimating=false] When set to `true`, tiles
- * will be loaded during animations. This may improve the user experience, but
- * can also make animations stutter on devices with slow memory.
- * @property {boolean} [loadTilesWhileInteracting=false] When set to `true`,
- * tiles will be loaded while interacting with the map. This may improve the
- * user experience, but can also make map panning and zooming choppy on devices
- * with slow memory.
  * @property {number} [moveTolerance=1] The minimum distance in pixels the
  * cursor must move to be detected as a map move event instead of a click.
  * Increasing this value can make it easier to click on the map.
- * @property {import("./Collection.js").default<import("./Overlay.js").default>|Array<import("./Overlay.js").default>} [overlays]
+ * @property {Collection<import("./Overlay.js").default>|Array<import("./Overlay.js").default>} [overlays]
  * Overlays initially added to the map. By default, no overlays are added.
  * @property {HTMLElement|string} [target] The container for the map, either the
  * element itself or the `id` of the element. If not specified at construction
  * time, {@link module:ol/Map~Map#setTarget} must be called for the map to be
  * rendered.
- * @property {import("./View.js").default} [view] The map's view.  No layer sources will be
+ * @property {View} [view] The map's view.  No layer sources will be
  * fetched unless this is specified at construction time or through
  * {@link module:ol/Map~Map#setView}.
  */
@@ -134,9 +124,9 @@ import {create as createTransform, apply as applyTransform} from './transform.js
 /**
  * @fires import("./MapBrowserEvent.js").MapBrowserEvent
  * @fires import("./MapEvent.js").MapEvent
- * @fires module:ol/render/Event~RenderEvent#postcompose
- * @fires module:ol/render/Event~RenderEvent#precompose
- * @fires module:ol/render/Event~RenderEvent#rendercomplete
+ * @fires import("./render/Event.js").default#precompose
+ * @fires import("./render/Event.js").default#postcompose
+ * @fires import("./render/Event.js").default#rendercomplete
  * @api
  */
 class PluggableMap extends BaseObject {
@@ -157,22 +147,6 @@ class PluggableMap extends BaseObject {
     this.maxTilesLoading_ = options.maxTilesLoading !== undefined ? options.maxTilesLoading : 16;
 
     /**
-     * @type {boolean}
-     * @private
-     */
-    this.loadTilesWhileAnimating_ =
-        options.loadTilesWhileAnimating !== undefined ?
-          options.loadTilesWhileAnimating : false;
-
-    /**
-     * @type {boolean}
-     * @private
-     */
-    this.loadTilesWhileInteracting_ =
-        options.loadTilesWhileInteracting !== undefined ?
-          options.loadTilesWhileInteracting : false;
-
-    /**
      * @private
      * @type {number}
      */
@@ -190,7 +164,7 @@ class PluggableMap extends BaseObject {
      */
     this.animationDelay_ = function() {
       this.animationDelayKey_ = undefined;
-      this.renderFrame_.call(this, Date.now());
+      this.renderFrame_(Date.now());
     }.bind(this);
 
     /**
@@ -261,6 +235,10 @@ class PluggableMap extends BaseObject {
      * @type {!HTMLElement}
      */
     this.overlayContainer_ = document.createElement('div');
+    this.overlayContainer_.style.position = 'absolute';
+    this.overlayContainer_.style.zIndex = '0';
+    this.overlayContainer_.style.width = '100%';
+    this.overlayContainer_.style.height = '100%';
     this.overlayContainer_.className = 'ol-overlaycontainer';
     this.viewport_.appendChild(this.overlayContainer_);
 
@@ -269,25 +247,16 @@ class PluggableMap extends BaseObject {
      * @type {!HTMLElement}
      */
     this.overlayContainerStopEvent_ = document.createElement('div');
+    this.overlayContainerStopEvent_.style.position = 'absolute';
+    this.overlayContainerStopEvent_.style.zIndex = '0';
+    this.overlayContainerStopEvent_.style.width = '100%';
+    this.overlayContainerStopEvent_.style.height = '100%';
     this.overlayContainerStopEvent_.className = 'ol-overlaycontainer-stopevent';
-    const overlayEvents = [
-      EventType.CLICK,
-      EventType.DBLCLICK,
-      EventType.MOUSEDOWN,
-      EventType.TOUCHSTART,
-      EventType.MSPOINTERDOWN,
-      MapBrowserEventType.POINTERDOWN,
-      EventType.MOUSEWHEEL,
-      EventType.WHEEL
-    ];
-    for (let i = 0, ii = overlayEvents.length; i < ii; ++i) {
-      listen(this.overlayContainerStopEvent_, overlayEvents[i], stopPropagation);
-    }
     this.viewport_.appendChild(this.overlayContainerStopEvent_);
 
     /**
      * @private
-     * @type {import("./MapBrowserEventHandler.js").default}
+     * @type {MapBrowserEventHandler}
      */
     this.mapBrowserEventHandler_ = new MapBrowserEventHandler(this, options.moveTolerance);
     for (const key in MapBrowserEventType) {
@@ -312,19 +281,19 @@ class PluggableMap extends BaseObject {
     listen(this.viewport_, EventType.MOUSEWHEEL, this.handleBrowserEvent, this);
 
     /**
-     * @type {import("./Collection.js").default<import("./control/Control.js").default>}
+     * @type {Collection<import("./control/Control.js").default>}
      * @protected
      */
     this.controls = optionsInternal.controls || new Collection();
 
     /**
-     * @type {import("./Collection.js").default<import("./interaction/Interaction.js").default>}
+     * @type {Collection<import("./interaction/Interaction.js").default>}
      * @protected
      */
     this.interactions = optionsInternal.interactions || new Collection();
 
     /**
-     * @type {import("./Collection.js").default<import("./Overlay.js").default>}
+     * @type {Collection<import("./Overlay.js").default>}
      * @private
      */
     this.overlays_ = optionsInternal.overlays;
@@ -343,7 +312,7 @@ class PluggableMap extends BaseObject {
     this.renderer_ = this.createRenderer();
 
     /**
-     * @type {function(Event)|undefined}
+     * @type {function(Event): void|undefined}
      * @private
      */
     this.handleResize_;
@@ -362,7 +331,7 @@ class PluggableMap extends BaseObject {
 
     /**
      * @private
-     * @type {import("./TileQueue.js").default}
+     * @type {TileQueue}
      */
     this.tileQueue_ = new TileQueue(
       this.getTilePriority.bind(this),
@@ -464,6 +433,10 @@ class PluggableMap extends BaseObject {
 
   }
 
+  /**
+   * @abstract
+   * @return {import("./renderer/Map.js").default} The map renderer
+   */
   createRenderer() {
     throw new Error('Use a map type that has a createRenderer method');
   }
@@ -478,7 +451,11 @@ class PluggableMap extends BaseObject {
   }
 
   /**
-   * Add the given interaction to the map.
+   * Add the given interaction to the map. If you want to add an interaction
+   * at another point of the collection use `getInteraction()` and the methods
+   * available on {@link module:ol/Collection~Collection}. This can be used to
+   * stop the event propagation from the handleEvent function. The interactions
+   * get to handle the events in the reverse order of this collection.
    * @param {import("./interaction/Interaction.js").default} interaction Interaction to add.
    * @api
    */
@@ -546,7 +523,7 @@ class PluggableMap extends BaseObject {
    * callback with each intersecting feature. Layers included in the detection can
    * be configured through the `layerFilter` option in `opt_options`.
    * @param {import("./pixel.js").Pixel} pixel Pixel.
-   * @param {function(this: S, (import("./Feature.js").default|import("./render/Feature.js").default),
+   * @param {function(this: S, import("./Feature.js").FeatureLike,
    *     import("./layer/Layer.js").default): T} callback Feature callback. The callback will be
    *     called with two arguments. The first argument is one
    *     {@link module:ol/Feature feature} or
@@ -565,7 +542,8 @@ class PluggableMap extends BaseObject {
       return;
     }
     const coordinate = this.getCoordinateFromPixel(pixel);
-    opt_options = opt_options !== undefined ? opt_options : {};
+    opt_options = opt_options !== undefined ? opt_options :
+      /** @type {AtPixelOptions} */ ({});
     const hitTolerance = opt_options.hitTolerance !== undefined ?
       opt_options.hitTolerance * this.frameState_.pixelRatio : 0;
     const layerFilter = opt_options.layerFilter !== undefined ?
@@ -579,7 +557,7 @@ class PluggableMap extends BaseObject {
    * Get all features that intersect a pixel on the viewport.
    * @param {import("./pixel.js").Pixel} pixel Pixel.
    * @param {AtPixelOptions=} opt_options Optional options.
-   * @return {Array<import("./Feature.js").default|import("./render/Feature.js").default>} The detected features or
+   * @return {Array<import("./Feature.js").FeatureLike>} The detected features or
    * `null` if none were found.
    * @api
    */
@@ -619,8 +597,7 @@ class PluggableMap extends BaseObject {
     const hitTolerance = options.hitTolerance !== undefined ?
       opt_options.hitTolerance * this.frameState_.pixelRatio : 0;
     const layerFilter = options.layerFilter || TRUE;
-    return this.renderer_.forEachLayerAtPixel(
-      pixel, this.frameState_, hitTolerance, callback, null, layerFilter, null);
+    return this.renderer_.forEachLayerAtPixel(pixel, this.frameState_, hitTolerance, callback, layerFilter);
   }
 
   /**
@@ -629,7 +606,6 @@ class PluggableMap extends BaseObject {
    * @param {import("./pixel.js").Pixel} pixel Pixel.
    * @param {AtPixelOptions=} opt_options Optional options.
    * @return {boolean} Is there a feature at the given pixel?
-   * @template U
    * @api
    */
   hasFeatureAtPixel(pixel, opt_options) {
@@ -637,7 +613,8 @@ class PluggableMap extends BaseObject {
       return false;
     }
     const coordinate = this.getCoordinateFromPixel(pixel);
-    opt_options = opt_options !== undefined ? opt_options : {};
+    opt_options = opt_options !== undefined ? opt_options :
+      /** @type {AtPixelOptions} */ ({});
     const layerFilter = opt_options.layerFilter !== undefined ? opt_options.layerFilter : TRUE;
     const hitTolerance = opt_options.hitTolerance !== undefined ?
       opt_options.hitTolerance * this.frameState_.pixelRatio : 0;
@@ -657,13 +634,16 @@ class PluggableMap extends BaseObject {
 
   /**
    * Returns the map pixel position for a browser event relative to the viewport.
-   * @param {Event} event Event.
+   * @param {Event|TouchEvent} event Event.
    * @return {import("./pixel.js").Pixel} Pixel.
    * @api
    */
   getEventPixel(event) {
     const viewportPosition = this.viewport_.getBoundingClientRect();
-    const eventPosition = event.changedTouches ? event.changedTouches[0] : event;
+    const eventPosition = 'changedTouches' in event ?
+      /** @type {TouchEvent} */ (event).changedTouches[0] :
+      /** @type {MouseEvent} */ (event);
+
     return [
       eventPosition.clientX - viewportPosition.left,
       eventPosition.clientY - viewportPosition.top
@@ -718,7 +698,7 @@ class PluggableMap extends BaseObject {
   /**
    * Get the map controls. Modifying this collection changes the controls
    * associated with the map.
-   * @return {import("./Collection.js").default<import("./control/Control.js").default>} Controls.
+   * @return {Collection<import("./control/Control.js").default>} Controls.
    * @api
    */
   getControls() {
@@ -728,7 +708,7 @@ class PluggableMap extends BaseObject {
   /**
    * Get the map overlays. Modifying this collection changes the overlays
    * associated with the map.
-   * @return {import("./Collection.js").default<import("./Overlay.js").default>} Overlays.
+   * @return {Collection<import("./Overlay.js").default>} Overlays.
    * @api
    */
   getOverlays() {
@@ -753,7 +733,7 @@ class PluggableMap extends BaseObject {
    * associated with the map.
    *
    * Interactions are used for e.g. pan, zoom and rotate.
-   * @return {import("./Collection.js").default<import("./interaction/Interaction.js").default>} Interactions.
+   * @return {Collection<import("./interaction/Interaction.js").default>} Interactions.
    * @api
    */
   getInteractions() {
@@ -762,19 +742,19 @@ class PluggableMap extends BaseObject {
 
   /**
    * Get the layergroup associated with this map.
-   * @return {import("./layer/Group.js").default} A layer group containing the layers in this map.
+   * @return {LayerGroup} A layer group containing the layers in this map.
    * @observable
    * @api
    */
   getLayerGroup() {
     return (
-      /** @type {import("./layer/Group.js").default} */ (this.get(MapProperty.LAYERGROUP))
+      /** @type {LayerGroup} */ (this.get(MapProperty.LAYERGROUP))
     );
   }
 
   /**
    * Get the collection of layers associated with this map.
-   * @return {!import("./Collection.js").default<import("./layer/Base.js").default>} Layers.
+   * @return {!Collection<import("./layer/Base.js").default>} Layers.
    * @api
    */
   getLayers() {
@@ -821,13 +801,13 @@ class PluggableMap extends BaseObject {
   /**
    * Get the view associated with this map. A view manages properties such as
    * center and resolution.
-   * @return {import("./View.js").default} The view that controls this map.
+   * @return {View} The view that controls this map.
    * @observable
    * @api
    */
   getView() {
     return (
-      /** @type {import("./View.js").default} */ (this.get(MapProperty.VIEW))
+      /** @type {View} */ (this.get(MapProperty.VIEW))
     );
   }
 
@@ -902,13 +882,20 @@ class PluggableMap extends BaseObject {
   }
 
   /**
-   * @param {import("./MapBrowserEvent.js").default} mapBrowserEvent The event to handle.
+   * @param {MapBrowserEvent} mapBrowserEvent The event to handle.
    */
   handleMapBrowserEvent(mapBrowserEvent) {
     if (!this.frameState_) {
       // With no view defined, we cannot translate pixels into geographical
       // coordinates so interactions cannot be used.
       return;
+    }
+    let target = mapBrowserEvent.originalEvent.target;
+    while (target instanceof HTMLElement) {
+      if (target.parentElement === this.overlayContainerStopEvent_) {
+        return;
+      }
+      target = target.parentElement;
     }
     this.focus_ = mapBrowserEvent.coordinate;
     mapBrowserEvent.frameState = this.frameState_;
@@ -949,13 +936,10 @@ class PluggableMap extends BaseObject {
       let maxNewLoads = maxTotalLoading;
       if (frameState) {
         const hints = frameState.viewHints;
-        if (hints[ViewHint.ANIMATING]) {
-          maxTotalLoading = this.loadTilesWhileAnimating_ ? 8 : 0;
-          maxNewLoads = 2;
-        }
-        if (hints[ViewHint.INTERACTING]) {
-          maxTotalLoading = this.loadTilesWhileInteracting_ ? 8 : 0;
-          maxNewLoads = 2;
+        if (hints[ViewHint.ANIMATING] || hints[ViewHint.INTERACTING]) {
+          const lowOnFrameBudget = Date.now() - frameState.time > 8;
+          maxTotalLoading = lowOnFrameBudget ? 0 : 8;
+          maxNewLoads = lowOnFrameBudget ? 0 : 2;
         }
       }
       if (tileQueue.getTilesLoading() < maxTotalLoading) {
@@ -963,7 +947,8 @@ class PluggableMap extends BaseObject {
         tileQueue.loadMoreTiles(maxTotalLoading, maxNewLoads);
       }
     }
-    if (frameState && this.hasListener(MapEventType.RENDERCOMPLETE) && !frameState.animate &&
+
+    if (frameState && this.hasListener(RenderEventType.RENDERCOMPLETE) && !frameState.animate &&
         !this.tileQueue_.getTilesLoading() && !getLoading(this.getLayers().getArray())) {
       this.renderer_.dispatchRenderEvent(RenderEventType.RENDERCOMPLETE, frameState);
     }
@@ -979,6 +964,10 @@ class PluggableMap extends BaseObject {
    * @private
    */
   handleSizeChanged_() {
+    if (this.getView()) {
+      this.getView().resolveConstraints(0);
+    }
+
     this.render();
   }
 
@@ -1066,6 +1055,8 @@ class PluggableMap extends BaseObject {
       this.viewChangeListenerKey_ = listen(
         view, EventType.CHANGE,
         this.handleViewPropertyChanged_, this);
+
+      view.resolveConstraints(0);
     }
     this.render();
   }
@@ -1180,11 +1171,6 @@ class PluggableMap extends BaseObject {
     let frameState = null;
     if (size !== undefined && hasArea(size) && view && view.isDef()) {
       const viewHints = view.getHints(this.frameState_ ? this.frameState_.viewHints : undefined);
-      const layerStatesArray = this.getLayerGroup().getLayerStatesArray();
-      const layerStates = {};
-      for (let i = 0, ii = layerStatesArray.length; i < ii; ++i) {
-        layerStates[getUid(layerStatesArray[i].layer)] = layerStatesArray[i];
-      }
       viewState = view.getState(this.pixelRatio_);
       frameState = /** @type {FrameState} */ ({
         animate: false,
@@ -1192,8 +1178,7 @@ class PluggableMap extends BaseObject {
         extent: extent,
         focus: this.focus_ ? this.focus_ : viewState.center,
         index: this.frameIndex_++,
-        layerStates: layerStates,
-        layerStatesArray: layerStatesArray,
+        layerStatesArray: this.getLayerGroup().getLayerStatesArray(),
         pixelRatio: this.pixelRatio_,
         pixelToCoordinateTransform: this.pixelToCoordinateTransform_,
         postRenderFunctions: [],
@@ -1252,7 +1237,7 @@ class PluggableMap extends BaseObject {
 
   /**
    * Sets the layergroup of this map.
-   * @param {import("./layer/Group.js").default} layerGroup A layer group containing the layers in this map.
+   * @param {LayerGroup} layerGroup A layer group containing the layers in this map.
    * @observable
    * @api
    */
@@ -1283,7 +1268,7 @@ class PluggableMap extends BaseObject {
 
   /**
    * Set the view for this map.
-   * @param {import("./View.js").default} view The view that controls this map.
+   * @param {View} view The view that controls this map.
    * @observable
    * @api
    */
@@ -1295,8 +1280,7 @@ class PluggableMap extends BaseObject {
    * @param {import("./Feature.js").default} feature Feature.
    */
   skipFeature(feature) {
-    const featureUid = getUid(feature).toString();
-    this.skippedFeatureUids_[featureUid] = true;
+    this.skippedFeatureUids_[getUid(feature)] = true;
     this.render();
   }
 
@@ -1331,8 +1315,7 @@ class PluggableMap extends BaseObject {
    * @param {import("./Feature.js").default} feature Feature.
    */
   unskipFeature(feature) {
-    const featureUid = getUid(feature).toString();
-    delete this.skippedFeatureUids_[featureUid];
+    delete this.skippedFeatureUids_[getUid(feature)];
     this.render();
   }
 }
@@ -1359,8 +1342,8 @@ function createOptionsInternal(options) {
    */
   const values = {};
 
-  const layerGroup = (options.layers instanceof LayerGroup) ?
-    options.layers : new LayerGroup({layers: options.layers});
+  const layerGroup = options.layers && typeof /** @type {?} */ (options.layers).getLayers === 'function' ?
+    /** @type {LayerGroup} */ (options.layers) : new LayerGroup({layers: /** @type {Collection} */ (options.layers)});
   values[MapProperty.LAYERGROUP] = layerGroup;
 
   values[MapProperty.TARGET] = options.target;
@@ -1373,9 +1356,9 @@ function createOptionsInternal(options) {
     if (Array.isArray(options.controls)) {
       controls = new Collection(options.controls.slice());
     } else {
-      assert(options.controls instanceof Collection,
+      assert(typeof /** @type {?} */ (options.controls).getArray === 'function',
         47); // Expected `controls` to be an array or an `import("./Collection.js").Collection`
-      controls = options.controls;
+      controls = /** @type {Collection} */ (options.controls);
     }
   }
 
@@ -1384,9 +1367,9 @@ function createOptionsInternal(options) {
     if (Array.isArray(options.interactions)) {
       interactions = new Collection(options.interactions.slice());
     } else {
-      assert(options.interactions instanceof Collection,
+      assert(typeof /** @type {?} */ (options.interactions).getArray === 'function',
         48); // Expected `interactions` to be an array or an `import("./Collection.js").Collection`
-      interactions = options.interactions;
+      interactions = /** @type {Collection} */ (options.interactions);
     }
   }
 
@@ -1395,7 +1378,7 @@ function createOptionsInternal(options) {
     if (Array.isArray(options.overlays)) {
       overlays = new Collection(options.overlays.slice());
     } else {
-      assert(options.overlays instanceof Collection,
+      assert(typeof /** @type {?} */ (options.overlays).getArray === 'function',
         49); // Expected `overlays` to be an array or an `import("./Collection.js").Collection`
       overlays = options.overlays;
     }
@@ -1421,12 +1404,14 @@ export default PluggableMap;
 function getLoading(layers) {
   for (let i = 0, ii = layers.length; i < ii; ++i) {
     const layer = layers[i];
-    if (layer instanceof LayerGroup) {
-      return getLoading(layer.getLayers().getArray());
-    }
-    const source = layers[i].getSource();
-    if (source && source.loading) {
-      return true;
+    if (typeof /** @type {?} */ (layer).getLayers === 'function') {
+      return getLoading(/** @type {LayerGroup} */ (layer).getLayers().getArray());
+    } else {
+      const source = /** @type {import("./layer/Layer.js").default} */ (
+        layer).getSource();
+      if (source && source.loading) {
+        return true;
+      }
     }
   }
   return false;

@@ -4,7 +4,7 @@
 import {listen} from '../events.js';
 import EventType from '../events/EventType.js';
 import {getChangeEventType} from '../Object.js';
-import Control from '../control/Control.js';
+import Control from './Control.js';
 import {getTransformFromProjections, identityTransform, get as getProjection} from '../proj.js';
 
 
@@ -23,11 +23,11 @@ const COORDINATE_FORMAT = 'coordinateFormat';
  * @typedef {Object} Options
  * @property {string} [className='ol-mouse-position'] CSS class name.
  * @property {import("../coordinate.js").CoordinateFormat} [coordinateFormat] Coordinate format.
- * @property {import("../proj.js").ProjectionLike} projection Projection.
+ * @property {import("../proj.js").ProjectionLike} [projection] Projection. Default is the view projection.
  * @property {function(import("../MapEvent.js").default)} [render] Function called when the
  * control should be re-rendered. This is called in a `requestAnimationFrame`
  * callback.
- * @property {Element|string} [target] Specify a target if you want the
+ * @property {HTMLElement|string} [target] Specify a target if you want the
  * control to be rendered outside of the map's viewport.
  * @property {string} [undefinedHTML='&#160;'] Markup to show when coordinates are not
  * available (e.g. when the pointer leaves the map viewport).  By default, the last position
@@ -43,6 +43,9 @@ const COORDINATE_FORMAT = 'coordinateFormat';
  * are in the view projection, but can be in any supported projection.
  * By default the control is shown in the top right corner of the map, but this
  * can be changed by using the css selector `.ol-mouse-position`.
+ *
+ * On touch devices, which usually do not have a mouse cursor, the coordinates
+ * of the currently touched position are shown.
  *
  * @api
  */
@@ -175,11 +178,13 @@ class MousePosition extends Control {
     if (map) {
       const viewport = map.getViewport();
       this.listenerKeys.push(
-        listen(viewport, EventType.MOUSEMOVE, this.handleMouseMove, this)
+        listen(viewport, EventType.MOUSEMOVE, this.handleMouseMove, this),
+        listen(viewport, EventType.TOUCHSTART, this.handleMouseMove, this)
       );
       if (this.renderOnMouseOut_) {
         this.listenerKeys.push(
-          listen(viewport, EventType.MOUSEOUT, this.handleMouseOut, this)
+          listen(viewport, EventType.MOUSEOUT, this.handleMouseOut, this),
+          listen(viewport, EventType.TOUCHEND, this.handleMouseOut, this)
         );
       }
     }
@@ -244,7 +249,8 @@ class MousePosition extends Control {
 
 
 /**
- * Update the mouseposition element.
+ * Update the projection. Rendering of the coordinates is done in
+ * `handleMouseMove` and `handleMouseUp`.
  * @param {import("../MapEvent.js").default} mapEvent Map event.
  * @this {MousePosition}
  * @api
@@ -259,7 +265,6 @@ export function render(mapEvent) {
       this.transform_ = null;
     }
   }
-  this.updateHTML_(this.lastMouseMovePixel_);
 }
 
 

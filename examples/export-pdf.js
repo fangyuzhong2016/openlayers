@@ -1,6 +1,5 @@
 import Map from '../src/ol/Map.js';
 import View from '../src/ol/View.js';
-import {defaults as defaultControls} from '../src/ol/control.js';
 import WKT from '../src/ol/format/WKT.js';
 import {Tile as TileLayer, Vector as VectorLayer} from '../src/ol/layer.js';
 import {OSM, Vector as VectorSource} from '../src/ol/source.js';
@@ -26,11 +25,6 @@ const vector = new VectorLayer({
 const map = new Map({
   layers: [raster, vector],
   target: 'map',
-  controls: defaultControls({
-    attributionOptions: {
-      collapsible: false
-    }
-  }),
   view: new View({
     center: [0, 0],
     zoom: 2
@@ -59,20 +53,23 @@ exportButton.addEventListener('click', function() {
   const dim = dims[format];
   const width = Math.round(dim[0] * resolution / 25.4);
   const height = Math.round(dim[1] * resolution / 25.4);
-  const size = /** @type {module:ol/size~Size} */ (map.getSize());
+  const size = map.getSize();
   const extent = map.getView().calculateExtent(size);
 
-  map.once('rendercomplete', function(event) {
-    const canvas = event.context.canvas;
-    const data = canvas.toDataURL('image/jpeg');
-    const pdf = new jsPDF('landscape', undefined, format);
-    pdf.addImage(data, 'JPEG', 0, 0, dim[0], dim[1]);
-    pdf.save('map.pdf');
-    // Reset original map size
-    map.setSize(size);
-    map.getView().fit(extent, {size});
-    exportButton.disabled = false;
-    document.body.style.cursor = 'auto';
+  map.once('rendercomplete', function() {
+    domtoimage.toJpeg(map.getViewport().querySelector('.ol-layers')).then(function(dataUrl) {
+      const pdf = new jsPDF('landscape', undefined, format);
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, dim[0], dim[1]);
+      pdf.save('map.pdf');
+      // Reset original map size
+      map.setSize(size);
+      map.getView().fit(extent, {
+        size: size,
+        constrainResolution: false
+      });
+      exportButton.disabled = false;
+      document.body.style.cursor = 'auto';
+    });
   });
 
   // Set print size
