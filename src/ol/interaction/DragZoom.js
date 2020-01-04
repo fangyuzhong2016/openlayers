@@ -17,6 +17,8 @@ import DragBox from './DragBox.js';
  * Default is {@link module:ol/events/condition~shiftKeyOnly}.
  * @property {number} [duration=200] Animation duration in milliseconds.
  * @property {boolean} [out=false] Use interaction for zooming out.
+ * @property {number} [minArea=64] The minimum area of the box in pixel, this value is used by the parent default
+ * `boxEndCondition` function.
  */
 
 
@@ -42,6 +44,7 @@ class DragZoom extends DragBox {
     super({
       condition: condition,
       className: options.className || 'ol-dragzoom',
+      minArea: options.minArea,
       onBoxEnd: onBoxEnd
     });
 
@@ -70,20 +73,20 @@ function onBoxEnd() {
   let extent = this.getGeometry().getExtent();
 
   if (this.out_) {
-    const mapExtent = view.calculateExtent(size);
+    const mapExtent = view.calculateExtentInternal(size);
     const boxPixelExtent = createOrUpdateFromCoordinates([
-      map.getPixelFromCoordinate(getBottomLeft(extent)),
-      map.getPixelFromCoordinate(getTopRight(extent))]);
-    const factor = view.getResolutionForExtent(boxPixelExtent, size);
+      map.getPixelFromCoordinateInternal(getBottomLeft(extent)),
+      map.getPixelFromCoordinateInternal(getTopRight(extent))]);
+    const factor = view.getResolutionForExtentInternal(boxPixelExtent, size);
 
     scaleFromCenter(mapExtent, 1 / factor);
     extent = mapExtent;
   }
 
-  const resolution = view.getConstrainedResolution(view.getResolutionForExtent(extent, size));
+  const resolution = view.getConstrainedResolution(view.getResolutionForExtentInternal(extent, size));
   const center = view.getConstrainedCenter(getCenter(extent), resolution);
 
-  view.animate({
+  view.animateInternal({
     resolution: resolution,
     center: center,
     duration: this.duration_,

@@ -1,16 +1,16 @@
 /**
- * @module ol/renderer/canvas/ImageLayer
+ * @module ol/renderer/canvas/VectorImageLayer
  */
 import ImageCanvas from '../../ImageCanvas.js';
 import ViewHint from '../../ViewHint.js';
-import {equals} from '../../array.js';
 import {getHeight, getWidth, isEmpty, scaleFromCenter} from '../../extent.js';
 import {assign} from '../../obj.js';
 import CanvasImageLayerRenderer from './ImageLayer.js';
 import CanvasVectorLayerRenderer from './VectorLayer.js';
-import {listen} from '../../events.js';
 import EventType from '../../events/EventType.js';
 import ImageState from '../../ImageState.js';
+import {renderDeclutterItems} from '../../render.js';
+import {apply, compose, create} from '../../transform.js';
 
 /**
  * @classdesc
@@ -26,11 +26,6 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
     super(layer);
 
     /**
-     * @type {!Array<string>}
-     */
-    this.skippedFeatures_ = [];
-
-    /**
      * @private
      * @type {import("./VectorLayer.js").default}
      */
@@ -41,6 +36,18 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
      * @type {number}
      */
     this.layerImageRatio_ = layer.getImageRatio();
+
+    /**
+     * @private
+     * @type {import("../../transform.js").Transform}
+     */
+    this.coordinateToVectorPixelTransform_ = create();
+
+    /**
+     * @private
+     * @type {import("../../transform.js").Transform}
+     */
+    this.renderedPixelToCoordinateTransform_ = null;
 
   }
 
@@ -55,7 +62,30 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
   /**
    * @inheritDoc
    */
-  prepareFrame(frameState, layerState) {
+  getFeatures(pixel) {
+    if (this.vectorRenderer_) {
+      const vectorPixel = apply(this.coordinateToVectorPixelTransform_,
+        apply(this.renderedPixelToCoordinateTransform_, pixel.slice()));
+      return this.vectorRenderer_.getFeatures(vectorPixel);
+    } else {
+      const promise = new Promise(function(resolve, reject) {
+        resolve([]);
+      });
+      return promise;
+    }
+  }
+
+  /**
+   * @inheritDoc
+   */
+  handleFontsChanged() {
+    this.vectorRenderer_.handleFontsChanged();
+  }
+
+  /**
+   * @inheritDoc
+   */
+  prepareFrame(frameState) {
     const pixelRatio = frameState.pixelRatio;
     const viewState = frameState.viewState;
     const viewResolution = viewState.resolution;
@@ -67,36 +97,32 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
       renderedExtent = renderedExtent.slice(0);
       scaleFromCenter(renderedExtent, this.layerImageRatio_);
     }
+    const width = getWidth(renderedExtent) / viewResolution;
+    const height = getHeight(renderedExtent) / viewResolution;
 
     if (!hints[ViewHint.ANIMATING] && !hints[ViewHint.INTERACTING] && !isEmpty(renderedExtent)) {
-      let skippedFeatures = this.skippedFeatures_;
+      vectorRenderer.useContainer(null, null, 1);
       const context = vectorRenderer.context;
       const imageFrameState = /** @type {import("../../PluggableMap.js").FrameState} */ (assign({}, frameState, {
-        size: [
-          getWidth(renderedExtent) / viewResolution,
-          getHeight(renderedExtent) / viewResolution
-        ],
+        declutterItems: [],
+        size: [width, height],
         viewState: /** @type {import("../../View.js").State} */ (assign({}, frameState.viewState, {
           rotation: 0
         }))
       }));
-      const newSkippedFeatures = Object.keys(imageFrameState.skippedFeatureUids).sort();
       const image = new ImageCanvas(renderedExtent, viewResolution, pixelRatio, context.canvas, function(callback) {
-        if (vectorRenderer.prepareFrame(imageFrameState, layerState) &&
-              (vectorRenderer.replayGroupChanged ||
-              !equals(skippedFeatures, newSkippedFeatures))) {
-          vectorRenderer.renderFrame(imageFrameState, layerState);
-          skippedFeatures = newSkippedFeatures;
+        if (vectorRenderer.prepareFrame(imageFrameState) && vectorRenderer.replayGroupChanged) {
+          vectorRenderer.renderFrame(imageFrameState, null);
+          renderDeclutterItems(imageFrameState, null);
           callback();
         }
       });
 
-      listen(image, EventType.CHANGE, function() {
+      image.addEventListener(EventType.CHANGE, function() {
         if (image.getState() === ImageState.LOADED) {
           this.image_ = image;
-          this.skippedFeatures_ = skippedFeatures;
         }
-      }, this);
+      }.bind(this));
       image.load();
     }
 
@@ -104,7 +130,14 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
       const image = this.image_;
       const imageResolution = image.getResolution();
       const imagePixelRatio = image.getPixelRatio();
-      this.renderedResolution = imageResolution * pixelRatio / imagePixelRatio;
+      const renderedResolution = imageResolution * pixelRatio / imagePixelRatio;
+      this.renderedResolution = renderedResolution;
+      this.renderedPixelToCoordinateTransform_ = frameState.pixelToCoordinateTransform.slice();
+      this.coordinateToVectorPixelTransform_ = compose(this.coordinateToVectorPixelTransform_,
+        width / 2, height / 2,
+        1 / renderedResolution, -1 / renderedResolution,
+        0,
+        -viewState.center[0], -viewState.center[1]);
     }
 
     return !!this.image_;
@@ -123,11 +156,11 @@ class CanvasVectorImageLayerRenderer extends CanvasImageLayerRenderer {
   /**
    * @inheritDoc
    */
-  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback) {
+  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures) {
     if (this.vectorRenderer_) {
-      return this.vectorRenderer_.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback);
+      return this.vectorRenderer_.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures);
     } else {
-      return super.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback);
+      return super.forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures);
     }
   }
 }

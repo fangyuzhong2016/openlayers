@@ -3,6 +3,7 @@ import VectorSource from '../../../../../src/ol/source/Vector.js';
 import CanvasVectorImageLayerRenderer from '../../../../../src/ol/renderer/canvas/VectorImageLayer.js';
 import {get as getProjection} from '../../../../../src/ol/proj.js';
 import {scaleFromCenter} from '../../../../../src/ol/extent.js';
+import {create} from '../../../../../src/ol/transform.js';
 
 
 describe('ol/renderer/canvas/VectorImageLayer', function() {
@@ -35,16 +36,19 @@ describe('ol/renderer/canvas/VectorImageLayer', function() {
         projExtent[0] - 10000, -10000, projExtent[0] + 10000, 10000
       ];
       const frameState = {
+        layerStatesArray: [layer.getLayerState()],
+        layerIndex: 0,
         extent: extent,
-        skippedFeatureUids: {},
         viewHints: [],
+        pixelToCoordinateTransform: create(),
         viewState: {
+          center: [0, 0],
           projection: projection,
           resolution: 1,
           rotation: 0
         }
       };
-      renderer.prepareFrame(frameState, {});
+      renderer.prepareFrame(frameState);
       const expected = renderer.image_.getExtent();
 
       scaleFromCenter(extent, 2);

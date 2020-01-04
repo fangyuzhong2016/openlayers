@@ -1,16 +1,17 @@
 /**
  * @module ol/layer/Heatmap
  */
-import {listen} from '../events.js';
 import {getChangeEventType} from '../Object.js';
 import {createCanvasContext2D} from '../dom.js';
 import VectorLayer from './Vector.js';
+import {clamp} from '../math.js';
 import {assign} from '../obj.js';
-import WebGLPointsLayerRenderer from '../renderer/webgl/PointsLayer';
+import WebGLPointsLayerRenderer from '../renderer/webgl/PointsLayer.js';
 
 
 /**
  * @typedef {Object} Options
+ * @property {string} [className='ol-layer'] A CSS class name to set to the layer element.
  * @property {number} [opacity=1] Opacity (0, 1).
  * @property {boolean} [visible=true] Visibility.
  * @property {import("../extent.js").Extent} [extent] The bounding extent for layer rendering.  The layer will not be
@@ -83,9 +84,7 @@ class Heatmap extends VectorLayer {
      */
     this.gradient_ = null;
 
-    listen(this,
-      getChangeEventType(Property.GRADIENT),
-      this.handleGradientChanged_, this);
+    this.addEventListener(getChangeEventType(Property.GRADIENT), this.handleGradientChanged_);
 
     this.setGradient(options.gradient ? options.gradient : DEFAULT_GRADIENT);
 
@@ -179,46 +178,96 @@ class Heatmap extends VectorLayer {
    */
   createRenderer() {
     return new WebGLPointsLayerRenderer(this, {
+      attributes: [
+        {
+          name: 'weight',
+          callback: function(feature) {
+            const weight = this.weightFunction_(feature);
+            return weight !== undefined ? clamp(weight, 0, 1) : 1;
+          }.bind(this)
+        }
+      ],
       vertexShader: `
         precision mediump float;
-        attribute vec2 a_position;
-        attribute vec2 a_texCoord;
-        attribute float a_rotateWithView;
-        attribute vec2 a_offsets;
-        attribute float a_opacity;
-
         uniform mat4 u_projectionMatrix;
         uniform mat4 u_offsetScaleMatrix;
-        uniform mat4 u_offsetRotateMatrix;
         uniform float u_size;
+        attribute vec2 a_position;
+        attribute float a_index;
+        attribute float a_weight;
 
         varying vec2 v_texCoord;
-        varying float v_opacity;
+        varying float v_weight;
 
         void main(void) {
           mat4 offsetMatrix = u_offsetScaleMatrix;
-          if (a_rotateWithView == 1.0) {
-            offsetMatrix = u_offsetScaleMatrix * u_offsetRotateMatrix;
-          }
-          vec4 offsets = offsetMatrix * vec4(a_offsets, 0.0, 0.0);
-          gl_Position = u_projectionMatrix * vec4(a_position, 0.0, 1.0) + offsets * u_size;
-          v_texCoord = a_texCoord;
-          v_opacity = a_opacity;
+          float offsetX = a_index == 0.0 || a_index == 3.0 ? -u_size / 2.0 : u_size / 2.0;
+          float offsetY = a_index == 0.0 || a_index == 1.0 ? -u_size / 2.0 : u_size / 2.0;
+          vec4 offsets = offsetMatrix * vec4(offsetX, offsetY, 0.0, 0.0);
+          gl_Position = u_projectionMatrix * vec4(a_position, 0.0, 1.0) + offsets;
+          float u = a_index == 0.0 || a_index == 3.0 ? 0.0 : 1.0;
+          float v = a_index == 0.0 || a_index == 1.0 ? 0.0 : 1.0;
+          v_texCoord = vec2(u, v);
+          v_weight = a_weight;
         }`,
       fragmentShader: `
         precision mediump float;
-        uniform float u_resolution;
         uniform float u_blurSlope;
 
         varying vec2 v_texCoord;
-        varying float v_opacity;
+        varying float v_weight;
 
         void main(void) {
           vec2 texCoord = v_texCoord * 2.0 - vec2(1.0, 1.0);
           float sqRadius = texCoord.x * texCoord.x + texCoord.y * texCoord.y;
           float value = (1.0 - sqrt(sqRadius)) * u_blurSlope;
-          float alpha = smoothstep(0.0, 1.0, value) * v_opacity;
+          float alpha = smoothstep(0.0, 1.0, value) * v_weight;
           gl_FragColor = vec4(alpha, alpha, alpha, alpha);
+        }`,
+      hitVertexShader: `
+        precision mediump float;
+        uniform mat4 u_projectionMatrix;
+        uniform mat4 u_offsetScaleMatrix;
+        uniform float u_size;
+        attribute vec2 a_position;
+        attribute float a_index;
+        attribute float a_weight;
+        attribute vec4 a_hitColor;
+
+        varying vec2 v_texCoord;
+        varying float v_weight;
+        varying vec4 v_hitColor;
+
+        void main(void) {
+          mat4 offsetMatrix = u_offsetScaleMatrix;
+          float offsetX = a_index == 0.0 || a_index == 3.0 ? -u_size / 2.0 : u_size / 2.0;
+          float offsetY = a_index == 0.0 || a_index == 1.0 ? -u_size / 2.0 : u_size / 2.0;
+          vec4 offsets = offsetMatrix * vec4(offsetX, offsetY, 0.0, 0.0);
+          gl_Position = u_projectionMatrix * vec4(a_position, 0.0, 1.0) + offsets;
+          float u = a_index == 0.0 || a_index == 3.0 ? 0.0 : 1.0;
+          float v = a_index == 0.0 || a_index == 1.0 ? 0.0 : 1.0;
+          v_texCoord = vec2(u, v);
+          v_hitColor = a_hitColor;
+          v_weight = a_weight;
+        }`,
+      hitFragmentShader: `
+        precision mediump float;
+        uniform float u_blurSlope;
+
+        varying vec2 v_texCoord;
+        varying float v_weight;
+        varying vec4 v_hitColor;
+
+        void main(void) {
+          vec2 texCoord = v_texCoord * 2.0 - vec2(1.0, 1.0);
+          float sqRadius = texCoord.x * texCoord.x + texCoord.y * texCoord.y;
+          float value = (1.0 - sqrt(sqRadius)) * u_blurSlope;
+          float alpha = smoothstep(0.0, 1.0, value) * v_weight;
+          if (alpha < 0.05) {
+            discard;
+          }
+
+          gl_FragColor = v_hitColor;
         }`,
       uniforms: {
         u_size: function() {
@@ -226,10 +275,7 @@ class Heatmap extends VectorLayer {
         }.bind(this),
         u_blurSlope: function() {
           return this.get(Property.RADIUS) / Math.max(1, this.get(Property.BLUR));
-        }.bind(this),
-        u_resolution: function(frameState) {
-          return frameState.viewState.resolution;
-        }
+        }.bind(this)
       },
       postProcesses: [
         {
@@ -240,7 +286,6 @@ class Heatmap extends VectorLayer {
             uniform sampler2D u_gradientTexture;
 
             varying vec2 v_texCoord;
-            varying vec2 v_screenCoord;
 
             void main() {
               vec4 color = texture2D(u_image, v_texCoord);
@@ -252,8 +297,7 @@ class Heatmap extends VectorLayer {
             u_gradientTexture: this.gradient_
           }
         }
-      ],
-      opacityCallback: this.weightFunction_
+      ]
     });
   }
 }

@@ -8,7 +8,7 @@ import {transform2D} from './flat/transform.js';
 import {get as getProjection, getTransform} from '../proj.js';
 import Units from '../proj/Units.js';
 import {create as createTransform, compose as composeTransform} from '../transform.js';
-
+import {memoizeOne} from '../functions.js';
 
 /**
  * @type {import("../transform.js").Transform}
@@ -47,12 +47,6 @@ class Geometry extends BaseObject {
 
     /**
      * @protected
-     * @type {Object<string, Geometry>}
-     */
-    this.simplifiedGeometryCache = {};
-
-    /**
-     * @protected
      * @type {number}
      */
     this.simplifiedGeometryMaxMinSquaredTolerance = 0;
@@ -63,6 +57,34 @@ class Geometry extends BaseObject {
      */
     this.simplifiedGeometryRevision = 0;
 
+    /**
+     * Get a transformed and simplified version of the geometry.
+     * @abstract
+     * @param {number} revision The geometry revision.
+     * @param {number} squaredTolerance Squared tolerance.
+     * @param {import("../proj.js").TransformFunction} [opt_transform] Optional transform function.
+     * @return {Geometry} Simplified geometry.
+     */
+    this.simplifyTransformedInternal = memoizeOne(function(revision, squaredTolerance, opt_transform) {
+      if (!opt_transform) {
+        return this.getSimplifiedGeometry(squaredTolerance);
+      }
+      const clone = this.clone();
+      clone.applyTransform(opt_transform);
+      return clone.getSimplifiedGeometry(squaredTolerance);
+    });
+
+  }
+
+  /**
+   * Get a transformed and simplified version of the geometry.
+   * @abstract
+   * @param {number} squaredTolerance Squared tolerance.
+   * @param {import("../proj.js").TransformFunction} [opt_transform] Optional transform function.
+   * @return {Geometry} Simplified geometry.
+   */
+  simplifyTransformed(squaredTolerance, opt_transform) {
+    return this.simplifyTransformedInternal(this.getRevision(), squaredTolerance, opt_transform);
   }
 
   /**
@@ -174,9 +196,8 @@ class Geometry extends BaseObject {
 
   /**
    * Create a simplified version of this geometry.  For linestrings, this uses
-   * the the {@link
-   * https://en.wikipedia.org/wiki/Ramer-Douglas-Peucker_algorithm
-   * Douglas Peucker} algorithm.  For polygons, a quantization-based
+   * the [Douglas Peucker](https://en.wikipedia.org/wiki/Ramer-Douglas-Peucker_algorithm)
+   * algorithm.  For polygons, a quantization-based
    * simplification is used to preserve topology.
    * @param {number} tolerance The tolerance distance for simplification.
    * @return {Geometry} A new, simplified version of the original geometry.
@@ -208,12 +229,13 @@ class Geometry extends BaseObject {
   }
 
   /**
-   * Apply a transform function to each coordinate of the geometry.
+   * Apply a transform function to the coordinates of the geometry.
    * The geometry is modified in place.
    * If you do not want the geometry modified in place, first `clone()` it and
    * then use this function on the clone.
    * @abstract
-   * @param {import("../proj.js").TransformFunction} transformFn Transform.
+   * @param {import("../proj.js").TransformFunction} transformFn Transform function.
+   * Called with a flat array of geometry coordinates.
    */
   applyTransform(transformFn) {
     abstract();

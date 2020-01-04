@@ -6,7 +6,6 @@ import {DEFAULT_WMS_VERSION} from './common.js';
 
 import ImageWrapper from '../Image.js';
 import {assert} from '../asserts.js';
-import {listen} from '../events.js';
 import EventType from '../events/EventType.js';
 import {containsExtent, getCenter, getForViewAndSize, getHeight, getWidth} from '../extent.js';
 import {assign} from '../obj.js';
@@ -63,7 +62,7 @@ class ImageWMS extends ImageSource {
    */
   constructor(opt_options) {
 
-    const options = opt_options || /** @type {Options} */ ({});
+    const options = opt_options ? opt_options : {};
 
     super({
       attributions: options.attributions,
@@ -156,7 +155,7 @@ class ImageWMS extends ImageSource {
    * @return {string|undefined} GetFeatureInfo URL.
    * @api
    */
-  getGetFeatureInfoUrl(coordinate, resolution, projection, params) {
+  getFeatureInfoUrl(coordinate, resolution, projection, params) {
     if (this.url_ === undefined) {
       return undefined;
     }
@@ -189,6 +188,53 @@ class ImageWMS extends ImageSource {
     return this.getRequestUrl_(
       extent, GETFEATUREINFO_IMAGE_SIZE,
       1, sourceProjectionObj || projectionObj, baseParams);
+  }
+
+  /**
+   * Return the GetLegendGraphic URL, optionally optimized for the passed
+   * resolution and possibly including any passed specific parameters. Returns
+   * `undefined` if the GetLegendGraphic URL cannot be constructed.
+   *
+   * @param {number} [resolution] Resolution. If set to undefined, `SCALE`
+   *     will not be calculated and included in URL.
+   * @param {Object} [params] GetLegendGraphic params. If `LAYER` is set, the
+   *     request is generated for this wms layer, else it will try to use the
+   *     configured wms layer. Default `FORMAT` is `image/png`.
+   *     `VERSION` should not be specified here.
+   * @return {string|undefined} GetLegendGraphic URL.
+   * @api
+   */
+  getLegendUrl(resolution, params) {
+    if (this.url_ === undefined) {
+      return undefined;
+    }
+
+    const baseParams = {
+      'SERVICE': 'WMS',
+      'VERSION': DEFAULT_WMS_VERSION,
+      'REQUEST': 'GetLegendGraphic',
+      'FORMAT': 'image/png'
+    };
+
+    if (params === undefined || params['LAYER'] === undefined) {
+      const layers = this.params_.LAYERS;
+      const isSingleLayer = !Array.isArray(layers) || layers.length === 1;
+      if (!isSingleLayer) {
+        return undefined;
+      }
+      baseParams['LAYER'] = layers;
+    }
+
+    if (resolution !== undefined) {
+      const mpu = this.getProjection() ? this.getProjection().getMetersPerUnit() : 1;
+      const dpi = 25.4 / 0.28;
+      const inchesPerMeter = 39.37;
+      baseParams['SCALE'] = resolution * mpu * inchesPerMeter * dpi;
+    }
+
+    assign(baseParams, params);
+
+    return appendParams(/** @type {string} */ (this.url_), baseParams);
   }
 
   /**
@@ -257,8 +303,7 @@ class ImageWMS extends ImageSource {
 
     this.renderedRevision_ = this.getRevision();
 
-    listen(this.image_, EventType.CHANGE,
-      this.handleImageChange, this);
+    this.image_.addEventListener(EventType.CHANGE, this.handleImageChange.bind(this));
 
     return this.image_;
 

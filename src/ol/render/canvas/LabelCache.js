@@ -8,7 +8,6 @@ import LRUCache from '../../structs/LRUCache.js';
 /**
  * @classdesc
  * Cache of pre-rendered labels.
- * @fires import("../events/Event.js").Event
  */
 class LabelCache extends LRUCache {
 
@@ -21,8 +20,8 @@ class LabelCache extends LRUCache {
   }
 
   clear() {
-    super.clear();
     this.consumers = {};
+    super.clear();
   }
 
   /**
@@ -51,7 +50,8 @@ class LabelCache extends LRUCache {
         }
       }
       const canvas = this.pop();
-      canvas.width = canvas.height = 0;
+      canvas.width = 0;
+      canvas.height = 0;
       for (const consumerId in this.consumers) {
         delete this.consumers[consumerId][key];
       }

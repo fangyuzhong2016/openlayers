@@ -9,6 +9,8 @@ import {
   scale as scaleTransform
 } from './transform.js';
 import CanvasImmediateRenderer from './render/canvas/Immediate.js';
+import {getSquaredTolerance} from './renderer/vector.js';
+import {getUserProjection, getTransformFromProjections} from './proj.js';
 
 
 /**
@@ -92,9 +94,15 @@ export function toContext(context, opt_options) {
 export function getVectorContext(event) {
   const frameState = event.frameState;
   const transform = multiplyTransform(event.inversePixelTransform.slice(), frameState.coordinateToPixelTransform);
+  const squaredTolerance = getSquaredTolerance(frameState.viewState.resolution, frameState.pixelRatio);
+  let userTransform;
+  const userProjection = getUserProjection();
+  if (userProjection) {
+    userTransform = getTransformFromProjections(userProjection, frameState.viewState.projection);
+  }
   return new CanvasImmediateRenderer(
     event.context, frameState.pixelRatio, frameState.extent, transform,
-    frameState.viewState.rotation);
+    frameState.viewState.rotation, squaredTolerance, userTransform);
 }
 
 /**
@@ -109,4 +117,25 @@ export function getRenderPixel(event, pixel) {
   const result = pixel.slice(0);
   applyTransform(event.inversePixelTransform.slice(), result);
   return result;
+}
+
+/**
+ * @param {import("./PluggableMap.js").FrameState} frameState Frame state.
+ * @param {?} declutterTree Declutter tree.
+ * @returns {?} Declutter tree.
+ */
+export function renderDeclutterItems(frameState, declutterTree) {
+  if (declutterTree) {
+    declutterTree.clear();
+  }
+  const items = frameState.declutterItems;
+  for (let z = items.length - 1; z >= 0; --z) {
+    const item = items[z];
+    const zIndexItems = item.items;
+    for (let i = 0, ii = zIndexItems.length; i < ii; i += 3) {
+      declutterTree = zIndexItems[i].renderDeclutter(zIndexItems[i + 1], zIndexItems[i + 2], item.opacity, declutterTree);
+    }
+  }
+  items.length = 0;
+  return declutterTree;
 }

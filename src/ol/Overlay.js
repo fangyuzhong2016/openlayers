@@ -178,25 +178,11 @@ class Overlay extends BaseObject {
      */
     this.mapPostrenderListenerKey = null;
 
-    listen(
-      this, getChangeEventType(Property.ELEMENT),
-      this.handleElementChanged, this);
-
-    listen(
-      this, getChangeEventType(Property.MAP),
-      this.handleMapChanged, this);
-
-    listen(
-      this, getChangeEventType(Property.OFFSET),
-      this.handleOffsetChanged, this);
-
-    listen(
-      this, getChangeEventType(Property.POSITION),
-      this.handlePositionChanged, this);
-
-    listen(
-      this, getChangeEventType(Property.POSITIONING),
-      this.handlePositioningChanged, this);
+    this.addEventListener(getChangeEventType(Property.ELEMENT), this.handleElementChanged);
+    this.addEventListener(getChangeEventType(Property.MAP), this.handleMapChanged);
+    this.addEventListener(getChangeEventType(Property.OFFSET), this.handleOffsetChanged);
+    this.addEventListener(getChangeEventType(Property.POSITION), this.handlePositionChanged);
+    this.addEventListener(getChangeEventType(Property.POSITIONING), this.handlePositioningChanged);
 
     if (options.element !== undefined) {
       this.setElement(options.element);
@@ -432,15 +418,15 @@ class Overlay extends BaseObject {
       }
 
       if (delta[0] !== 0 || delta[1] !== 0) {
-        const center = /** @type {import("./coordinate.js").Coordinate} */ (map.getView().getCenter());
-        const centerPx = map.getPixelFromCoordinate(center);
+        const center = /** @type {import("./coordinate.js").Coordinate} */ (map.getView().getCenterInternal());
+        const centerPx = map.getPixelFromCoordinateInternal(center);
         const newCenterPx = [
           centerPx[0] + delta[0],
           centerPx[1] + delta[1]
         ];
 
-        map.getView().animate({
-          center: map.getCoordinateFromPixel(newCenterPx),
+        map.getView().animateInternal({
+          center: map.getCoordinateFromPixelInternal(newCenterPx),
           duration: this.autoPanAnimation.duration,
           easing: this.autoPanAnimation.easing
         });
@@ -450,8 +436,8 @@ class Overlay extends BaseObject {
 
   /**
    * Get the extent of an element relative to the document
-   * @param {HTMLElement|undefined} element The element.
-   * @param {import("./size.js").Size|undefined} size The size of the element.
+   * @param {HTMLElement} element The element.
+   * @param {import("./size.js").Size} size The size of the element.
    * @return {import("./extent.js").Extent} The extent.
    * @protected
    */
@@ -526,15 +512,18 @@ class Overlay extends BaseObject {
         positioning == OverlayPositioning.CENTER_RIGHT ||
         positioning == OverlayPositioning.TOP_RIGHT) {
       if (this.rendered.left_ !== '') {
-        this.rendered.left_ = style.left = '';
+        this.rendered.left_ = '';
+        style.left = '';
       }
       const right = Math.round(mapSize[0] - pixel[0] - offsetX) + 'px';
       if (this.rendered.right_ != right) {
-        this.rendered.right_ = style.right = right;
+        this.rendered.right_ = right;
+        style.right = right;
       }
     } else {
       if (this.rendered.right_ !== '') {
-        this.rendered.right_ = style.right = '';
+        this.rendered.right_ = '';
+        style.right = '';
       }
       if (positioning == OverlayPositioning.BOTTOM_CENTER ||
           positioning == OverlayPositioning.CENTER_CENTER ||
@@ -543,22 +532,26 @@ class Overlay extends BaseObject {
       }
       const left = Math.round(pixel[0] + offsetX) + 'px';
       if (this.rendered.left_ != left) {
-        this.rendered.left_ = style.left = left;
+        this.rendered.left_ = left;
+        style.left = left;
       }
     }
     if (positioning == OverlayPositioning.BOTTOM_LEFT ||
         positioning == OverlayPositioning.BOTTOM_CENTER ||
         positioning == OverlayPositioning.BOTTOM_RIGHT) {
       if (this.rendered.top_ !== '') {
-        this.rendered.top_ = style.top = '';
+        this.rendered.top_ = '';
+        style.top = '';
       }
       const bottom = Math.round(mapSize[1] - pixel[1] - offsetY) + 'px';
       if (this.rendered.bottom_ != bottom) {
-        this.rendered.bottom_ = style.bottom = bottom;
+        this.rendered.bottom_ = bottom;
+        style.bottom = bottom;
       }
     } else {
       if (this.rendered.bottom_ !== '') {
-        this.rendered.bottom_ = style.bottom = '';
+        this.rendered.bottom_ = '';
+        style.bottom = '';
       }
       if (positioning == OverlayPositioning.CENTER_LEFT ||
           positioning == OverlayPositioning.CENTER_CENTER ||
@@ -567,7 +560,8 @@ class Overlay extends BaseObject {
       }
       const top = Math.round(pixel[1] + offsetY) + 'px';
       if (this.rendered.top_ != top) {
-        this.rendered.top_ = style.top = top;
+        this.rendered.top_ = 'top';
+        style.top = top;
       }
     }
   }

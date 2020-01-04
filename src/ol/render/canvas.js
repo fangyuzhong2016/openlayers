@@ -1,7 +1,7 @@
 /**
  * @module ol/render/canvas
  */
-import {getFontFamilies} from '../css.js';
+import {getFontParameters} from '../css.js';
 import {createCanvasContext2D} from '../dom.js';
 import {clear} from '../obj.js';
 import {create as createTransform} from '../transform.js';
@@ -18,19 +18,19 @@ import LabelCache from './canvas/LabelCache.js';
  * @typedef {Object} FillStrokeState
  * @property {import("../colorlike.js").ColorLike} [currentFillStyle]
  * @property {import("../colorlike.js").ColorLike} [currentStrokeStyle]
- * @property {string} [currentLineCap]
+ * @property {CanvasLineCap} [currentLineCap]
  * @property {Array<number>} currentLineDash
  * @property {number} [currentLineDashOffset]
- * @property {string} [currentLineJoin]
+ * @property {CanvasLineJoin} [currentLineJoin]
  * @property {number} [currentLineWidth]
  * @property {number} [currentMiterLimit]
  * @property {number} [lastStroke]
  * @property {import("../colorlike.js").ColorLike} [fillStyle]
  * @property {import("../colorlike.js").ColorLike} [strokeStyle]
- * @property {string} [lineCap]
+ * @property {CanvasLineCap} [lineCap]
  * @property {Array<number>} lineDash
  * @property {number} [lineDashOffset]
- * @property {string} [lineJoin]
+ * @property {CanvasLineJoin} [lineJoin]
  * @property {number} [lineWidth]
  * @property {number} [miterLimit]
  */
@@ -38,10 +38,10 @@ import LabelCache from './canvas/LabelCache.js';
 
 /**
  * @typedef {Object} StrokeState
- * @property {string} lineCap
+ * @property {CanvasLineCap} lineCap
  * @property {Array<number>} lineDash
  * @property {number} lineDashOffset
- * @property {string} lineJoin
+ * @property {CanvasLineJoin} lineJoin
  * @property {number} lineWidth
  * @property {number} miterLimit
  * @property {import("../colorlike.js").ColorLike} strokeStyle
@@ -62,7 +62,6 @@ import LabelCache from './canvas/LabelCache.js';
  * @property {Array<number>} [padding]
  */
 
-
 /**
  * Container for decluttered replay instructions that need to be rendered or
  * omitted together, i.e. when styles render both an image and text, or for the
@@ -73,6 +72,12 @@ import LabelCache from './canvas/LabelCache.js';
  * In addition to these four elements, declutter instruction arrays (i.e. the
  * arguments to {@link module:ol/render/canvas~drawImage} are appended to the array.
  * @typedef {Array<*>} DeclutterGroup
+ */
+
+
+/**
+ * Declutter groups for support of multi geometries.
+ * @typedef {Array<DeclutterGroup>} DeclutterGroups
  */
 
 
@@ -92,7 +97,7 @@ export const defaultFillStyle = '#000';
 
 /**
  * @const
- * @type {string}
+ * @type {CanvasLineCap}
  */
 export const defaultLineCap = 'round';
 
@@ -113,7 +118,7 @@ export const defaultLineDashOffset = 0;
 
 /**
  * @const
- * @type {string}
+ * @type {CanvasLineJoin}
  */
 export const defaultLineJoin = 'round';
 
@@ -180,6 +185,10 @@ export const checkedFonts = {};
  */
 let measureContext = null;
 
+/**
+ * @type {string}
+ */
+let measureFont;
 
 /**
  * @type {!Object<string, number>}
@@ -192,7 +201,7 @@ export const textHeights = {};
  * @param {string} fontSpec CSS font spec.
  */
 export const checkFont = (function() {
-  const retries = 60;
+  const retries = 100;
   const checked = checkedFonts;
   const size = '32px ';
   const referenceFonts = ['monospace', 'serif'];
@@ -200,31 +209,26 @@ export const checkFont = (function() {
   const text = 'wmytzilWMYTZIL@#/&?$%10\uF013';
   let interval, referenceWidth;
 
-  function isAvailable(font) {
-    const context = getMeasureContext();
-    // Check weight ranges according to
-    // https://developer.mozilla.org/en-US/docs/Web/CSS/font-weight#Fallback_weights
-    for (let weight = 100; weight <= 700; weight += 300) {
-      const fontWeight = weight + ' ';
-      let available = true;
-      for (let i = 0; i < len; ++i) {
-        const referenceFont = referenceFonts[i];
-        context.font = fontWeight + size + referenceFont;
-        referenceWidth = context.measureText(text).width;
-        if (font != referenceFont) {
-          context.font = fontWeight + size + font + ',' + referenceFont;
-          const width = context.measureText(text).width;
-          // If width and referenceWidth are the same, then the fallback was used
-          // instead of the font we wanted, so the font is not available.
-          available = available && width != referenceWidth;
-        }
+  /**
+   * @param {string} fontStyle Css font-style
+   * @param {string} fontWeight Css font-weight
+   * @param {*} fontFamily Css font-family
+   * @return {boolean} Font with style and weight is available
+   */
+  function isAvailable(fontStyle, fontWeight, fontFamily) {
+    let available = true;
+    for (let i = 0; i < len; ++i) {
+      const referenceFont = referenceFonts[i];
+      referenceWidth = measureTextWidth(fontStyle + ' ' + fontWeight + ' ' + size + referenceFont, text);
+      if (fontFamily != referenceFont) {
+        const width = measureTextWidth(fontStyle + ' ' + fontWeight + ' ' + size + fontFamily + ',' + referenceFont, text);
+        // If width and referenceWidth are the same, then the fallback was used
+        // instead of the font we wanted, so the font is not available.
+        available = available && width != referenceWidth;
       }
-      if (available) {
-        // Consider font available when it is available in one weight range.
-        //FIXME With this we miss rare corner cases, so we should consider
-        //FIXME checking availability for each requested weight range.
-        return true;
-      }
+    }
+    if (available) {
+      return true;
     }
     return false;
   }
@@ -233,12 +237,15 @@ export const checkFont = (function() {
     let done = true;
     for (const font in checked) {
       if (checked[font] < retries) {
-        if (isAvailable(font)) {
+        if (isAvailable.apply(this, font.split('\n'))) {
           checked[font] = retries;
           clear(textHeights);
           // Make sure that loaded fonts are picked up by Safari
           measureContext = null;
-          labelCache.clear();
+          measureFont = undefined;
+          if (labelCache.getCount()) {
+            labelCache.clear();
+          }
         } else {
           ++checked[font];
           done = false;
@@ -252,16 +259,18 @@ export const checkFont = (function() {
   }
 
   return function(fontSpec) {
-    const fontFamilies = getFontFamilies(fontSpec);
-    if (!fontFamilies) {
+    const font = getFontParameters(fontSpec);
+    if (!font) {
       return;
     }
-    for (let i = 0, ii = fontFamilies.length; i < ii; ++i) {
-      const fontFamily = fontFamilies[i];
-      if (!(fontFamily in checked)) {
-        checked[fontFamily] = retries;
-        if (!isAvailable(fontFamily)) {
-          checked[fontFamily] = 0;
+    const families = font.families;
+    for (let i = 0, ii = families.length; i < ii; ++i) {
+      const family = families[i];
+      const key = font.style + '\n' + font.weight + '\n' + family;
+      if (!(key in checked)) {
+        checked[key] = retries;
+        if (!isAvailable(font.style, font.weight, family)) {
+          checked[key] = 0;
           if (interval === undefined) {
             interval = setInterval(check, 32);
           }
@@ -273,21 +282,13 @@ export const checkFont = (function() {
 
 
 /**
- * @return {CanvasRenderingContext2D} Measure context.
- */
-function getMeasureContext() {
-  if (!measureContext) {
-    measureContext = createCanvasContext2D(1, 1);
-  }
-  return measureContext;
-}
-
-
-/**
  * @param {string} font Font to use for measuring.
  * @return {import("../size.js").Size} Measurement.
  */
 export const measureTextHeight = (function() {
+  /**
+   * @type {HTMLDivElement}
+   */
   let div;
   const heights = textHeights;
   return function(font) {
@@ -296,13 +297,15 @@ export const measureTextHeight = (function() {
       if (!div) {
         div = document.createElement('div');
         div.innerHTML = 'M';
-        div.style.margin = div.style.padding = '0 !important';
+        div.style.margin = '0 !important';
+        div.style.padding = '0 !important';
         div.style.position = 'absolute !important';
         div.style.left = '-99999px !important';
       }
       div.style.font = font;
       document.body.appendChild(div);
-      height = heights[font] = div.offsetHeight;
+      height = div.offsetHeight;
+      heights[font] = height;
       document.body.removeChild(div);
     }
     return height;
@@ -316,9 +319,12 @@ export const measureTextHeight = (function() {
  * @return {number} Width.
  */
 export function measureTextWidth(font, text) {
-  const measureContext = getMeasureContext();
-  if (font != measureContext.font) {
+  if (!measureContext) {
+    measureContext = createCanvasContext2D(1, 1);
+  }
+  if (font != measureFont) {
     measureContext.font = font;
+    measureFont = measureContext.font;
   }
   return measureContext.measureText(text).width;
 }
@@ -335,7 +341,8 @@ export function measureAndCacheTextWidth(font, text, cache) {
   if (text in cache) {
     return cache[text];
   }
-  const width = cache[text] = measureTextWidth(font, text);
+  const width = measureTextWidth(font, text);
+  cache[text] = width;
   return width;
 }
 
@@ -403,7 +410,7 @@ export function drawImage(context,
 
   context.drawImage(image, originX, originY, w, h, x, y, w * scale, h * scale);
 
-  if (alpha) {
+  if (opacity != 1) {
     context.globalAlpha = alpha;
   }
   if (transform) {

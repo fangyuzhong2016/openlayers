@@ -3,7 +3,7 @@
  */
 import {scale as scaleCoordinate, rotate as rotateCoordinate} from '../coordinate.js';
 import {easeOut} from '../easing.js';
-import {noModifierKeys} from '../events/condition.js';
+import {noModifierKeys, primaryAction, focus} from '../events/condition.js';
 import {FALSE} from '../functions.js';
 import PointerInteraction, {centroid as centroidFromPointers} from './Pointer.js';
 
@@ -12,7 +12,7 @@ import PointerInteraction, {centroid as centroidFromPointers} from './Pointer.js
  * @typedef {Object} Options
  * @property {import("../events/condition.js").Condition} [condition] A function that takes an {@link module:ol/MapBrowserEvent~MapBrowserEvent} and returns a boolean
  * to indicate whether that event should be handled.
- * Default is {@link module:ol/events/condition~noModifierKeys}.
+ * Default is {@link module:ol/events/condition~noModifierKeys} and {@link module:ol/events/condition~primaryAction}.
  * @property {import("../Kinetic.js").default} [kinetic] Kinetic inertia to apply to the pan.
  */
 
@@ -59,7 +59,7 @@ class DragPan extends PointerInteraction {
      * @private
      * @type {import("../events/condition.js").Condition}
      */
-    this.condition_ = options.condition ? options.condition : noModifierKeys;
+    this.condition_ = options.condition ? options.condition : defaultCondition;
 
     /**
      * @private
@@ -68,6 +68,20 @@ class DragPan extends PointerInteraction {
     this.noKinetic_ = false;
 
   }
+
+  /**
+   * @private
+   * @param {import("../MapBrowserEvent").default} mapBrowserEvent Event.
+   * @return {boolean} Condition passes.
+   */
+  conditionInternal_(mapBrowserEvent) {
+    let pass = true;
+    if (mapBrowserEvent.map.getTargetElement().hasAttribute('tabindex')) {
+      pass = focus(mapBrowserEvent);
+    }
+    return pass && this.condition_(mapBrowserEvent);
+  }
+
 
   /**
    * @inheritDoc
@@ -92,7 +106,7 @@ class DragPan extends PointerInteraction {
         const view = map.getView();
         scaleCoordinate(delta, view.getResolution());
         rotateCoordinate(delta, view.getRotation());
-        view.adjustCenter(delta);
+        view.adjustCenterInternal(delta);
       }
     } else if (this.kinetic_) {
       // reset so we don't overestimate the kinetic energy after
@@ -101,6 +115,7 @@ class DragPan extends PointerInteraction {
     }
     this.lastCentroid = centroid;
     this.lastPointersCount_ = targetPointers.length;
+    mapBrowserEvent.originalEvent.preventDefault();
   }
 
   /**
@@ -113,13 +128,13 @@ class DragPan extends PointerInteraction {
       if (!this.noKinetic_ && this.kinetic_ && this.kinetic_.end()) {
         const distance = this.kinetic_.getDistance();
         const angle = this.kinetic_.getAngle();
-        const center = /** @type {!import("../coordinate.js").Coordinate} */ (view.getCenter());
-        const centerpx = map.getPixelFromCoordinate(center);
-        const dest = map.getCoordinateFromPixel([
+        const center = view.getCenterInternal();
+        const centerpx = map.getPixelFromCoordinateInternal(center);
+        const dest = map.getCoordinateFromPixelInternal([
           centerpx[0] - distance * Math.cos(angle),
           centerpx[1] - distance * Math.sin(angle)
         ]);
-        view.animate({
+        view.animateInternal({
           center: view.getConstrainedCenter(dest),
           duration: 500,
           easing: easeOut
@@ -145,7 +160,7 @@ class DragPan extends PointerInteraction {
    * @inheritDoc
    */
   handleDownEvent(mapBrowserEvent) {
-    if (this.targetPointers.length > 0 && this.condition_(mapBrowserEvent)) {
+    if (this.targetPointers.length > 0 && this.conditionInternal_(mapBrowserEvent)) {
       const map = mapBrowserEvent.map;
       const view = map.getView();
       this.lastCentroid = null;
@@ -164,6 +179,14 @@ class DragPan extends PointerInteraction {
       return false;
     }
   }
+}
+
+/**
+ * @param {import("../MapBrowserPointerEvent.js").default} mapBrowserEvent Browser event.
+ * @return {boolean} Combined condition result.
+ */
+function defaultCondition(mapBrowserEvent) {
+  return noModifierKeys(mapBrowserEvent) && primaryAction(mapBrowserEvent);
 }
 
 export default DragPan;

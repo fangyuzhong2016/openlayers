@@ -35,18 +35,12 @@ class ExecutorGroup extends Disposable {
    * @param {number} resolution Resolution.
    * @param {number} pixelRatio Pixel ratio.
    * @param {boolean} overlaps The executor group can have overlapping geometries.
-   * @param {?} declutterTree Declutter tree for declutter processing in postrender.
    * @param {!Object<string, !Object<BuilderType, import("./Builder.js").SerializableInstructions>>} allInstructions
    * The serializable instructions.
    * @param {number=} opt_renderBuffer Optional rendering buffer.
    */
-  constructor(maxExtent, resolution, pixelRatio, overlaps, declutterTree, allInstructions, opt_renderBuffer) {
+  constructor(maxExtent, resolution, pixelRatio, overlaps, allInstructions, opt_renderBuffer) {
     super();
-    /**
-     * Declutter tree.
-     * @private
-     */
-    this.declutterTree_ = declutterTree;
 
     /**
      * @private
@@ -88,7 +82,7 @@ class ExecutorGroup extends Disposable {
      * @private
      * @type {CanvasRenderingContext2D}
      */
-    this.hitDetectionContext_ = createCanvasContext2D(1, 1);
+    this.hitDetectionContext_ = null;
 
     /**
      * @private
@@ -122,13 +116,14 @@ class ExecutorGroup extends Disposable {
     for (const zIndex in allInstructions) {
       let executors = this.executorsByZIndex_[zIndex];
       if (executors === undefined) {
-        this.executorsByZIndex_[zIndex] = executors = {};
+        executors = {};
+        this.executorsByZIndex_[zIndex] = executors;
       }
       const instructionByZindex = allInstructions[zIndex];
       for (const builderType in instructionByZindex) {
         const instructions = instructionByZindex[builderType];
         executors[builderType] = new Executor(
-          this.resolution_, this.pixelRatio_, this.overlaps_, this.declutterTree_, instructions);
+          this.resolution_, this.pixelRatio_, this.overlaps_, instructions);
       }
     }
   }
@@ -143,8 +138,12 @@ class ExecutorGroup extends Disposable {
         executors[key].disposeInternal();
       }
     }
-    const canvas = this.hitDetectionContext_.canvas;
-    canvas.width = canvas.height = 0;
+    if (this.hitDetectionContext_) {
+      const canvas = this.hitDetectionContext_.canvas;
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+
     super.disposeInternal();
   }
 
@@ -170,9 +169,8 @@ class ExecutorGroup extends Disposable {
    * @param {number} resolution Resolution.
    * @param {number} rotation Rotation.
    * @param {number} hitTolerance Hit tolerance in pixels.
-   * @param {Object<string, boolean>} skippedFeaturesHash Ids of features to skip.
    * @param {function(import("../../Feature.js").FeatureLike): T} callback Feature callback.
-   * @param {Object<string, import("../canvas.js").DeclutterGroup>} declutterReplays Declutter replays.
+   * @param {Array<import("../../Feature.js").FeatureLike>} declutteredFeatures Decluttered features.
    * @return {T|undefined} Callback result.
    * @template T
    */
@@ -181,9 +179,8 @@ class ExecutorGroup extends Disposable {
     resolution,
     rotation,
     hitTolerance,
-    skippedFeaturesHash,
     callback,
-    declutterReplays
+    declutteredFeatures
   ) {
 
     hitTolerance = Math.round(hitTolerance);
@@ -193,6 +190,10 @@ class ExecutorGroup extends Disposable {
       1 / resolution, -1 / resolution,
       -rotation,
       -coordinate[0], -coordinate[1]);
+
+    if (!this.hitDetectionContext_) {
+      this.hitDetectionContext_ = createCanvasContext2D(contextSize, contextSize);
+    }
     const context = this.hitDetectionContext_;
 
     if (context.canvas.width !== contextSize || context.canvas.height !== contextSize) {
@@ -213,12 +214,6 @@ class ExecutorGroup extends Disposable {
     }
 
     const mask = getCircleArray(hitTolerance);
-    let declutteredFeatures;
-    if (this.declutterTree_) {
-      declutteredFeatures = this.declutterTree_.all().map(function(entry) {
-        return entry.value;
-      });
-    }
 
     let builderType;
 
@@ -261,20 +256,9 @@ class ExecutorGroup extends Disposable {
         builderType = ORDER[j];
         executor = executors[builderType];
         if (executor !== undefined) {
-          if (declutterReplays &&
-              (builderType == BuilderType.IMAGE || builderType == BuilderType.TEXT)) {
-            const declutter = declutterReplays[zIndexKey];
-            if (!declutter) {
-              declutterReplays[zIndexKey] = [executor, transform.slice(0)];
-            } else {
-              declutter.push(executor, transform.slice(0));
-            }
-          } else {
-            result = executor.executeHitDetection(context, transform, rotation,
-              skippedFeaturesHash, featureCallback, hitExtent);
-            if (result) {
-              return result;
-            }
+          result = executor.executeHitDetection(context, transform, rotation, featureCallback, hitExtent);
+          if (result) {
+            return result;
           }
         }
       }
@@ -312,14 +296,12 @@ class ExecutorGroup extends Disposable {
    * @param {CanvasRenderingContext2D} context Context.
    * @param {import("../../transform.js").Transform} transform Transform.
    * @param {number} viewRotation View rotation.
-   * @param {Object<string, boolean>} skippedFeaturesHash Ids of features to skip.
    * @param {boolean} snapToPixel Snap point symbols and test to integer pixel.
    * @param {Array<BuilderType>=} opt_builderTypes Ordered replay types to replay.
    *     Default is {@link module:ol/render/replay~ORDER}
    * @param {Object<string, import("../canvas.js").DeclutterGroup>=} opt_declutterReplays Declutter replays.
    */
-  execute(context, transform, viewRotation, skippedFeaturesHash, snapToPixel, opt_builderTypes,
-    opt_declutterReplays) {
+  execute(context, transform, viewRotation, snapToPixel, opt_builderTypes, opt_declutterReplays) {
 
     /** @type {Array<number>} */
     const zs = Object.keys(this.executorsByZIndex_).map(Number);
@@ -350,7 +332,7 @@ class ExecutorGroup extends Disposable {
               declutter.push(replay, transform.slice(0));
             }
           } else {
-            replay.execute(context, transform, viewRotation, skippedFeaturesHash, snapToPixel);
+            replay.execute(context, transform, viewRotation, snapToPixel);
           }
         }
       }
@@ -445,17 +427,26 @@ export function getCircleArray(radius) {
  * @param {!Object<string, Array<*>>} declutterReplays Declutter replays.
  * @param {CanvasRenderingContext2D} context Context.
  * @param {number} rotation Rotation.
+ * @param {number} opacity Opacity.
  * @param {boolean} snapToPixel Snap point symbols and text to integer pixels.
+ * @param {Array<import("../../PluggableMap.js").DeclutterItems>} declutterItems Declutter items.
  */
-export function replayDeclutter(declutterReplays, context, rotation, snapToPixel) {
+export function replayDeclutter(declutterReplays, context, rotation, opacity, snapToPixel, declutterItems) {
   const zs = Object.keys(declutterReplays).map(Number).sort(numberSafeCompareFunction);
-  const skippedFeatureUids = {};
   for (let z = 0, zz = zs.length; z < zz; ++z) {
     const executorData = declutterReplays[zs[z].toString()];
+    let currentExecutor;
     for (let i = 0, ii = executorData.length; i < ii;) {
       const executor = executorData[i++];
+      if (executor !== currentExecutor) {
+        currentExecutor = executor;
+        declutterItems.push({
+          items: executor.declutterItems,
+          opacity: opacity
+        });
+      }
       const transform = executorData[i++];
-      executor.execute(context, transform, rotation, skippedFeatureUids, snapToPixel);
+      executor.execute(context, transform, rotation, snapToPixel);
     }
   }
 }

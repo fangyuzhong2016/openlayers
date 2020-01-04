@@ -60,8 +60,8 @@ import {toEPSG4326, fromEPSG4326, PROJECTIONS as EPSG3857_PROJECTIONS} from './p
 import {PROJECTIONS as EPSG4326_PROJECTIONS} from './proj/epsg4326.js';
 import Projection from './proj/Projection.js';
 import Units, {METERS_PER_UNIT} from './proj/Units.js';
-import * as projections from './proj/projections.js';
 import {add as addTransformFunc, clear as clearTransformFuncs, get as getTransformFunc} from './proj/transforms.js';
+import {add as addProj, clear as clearProj, get as getProj} from './proj/projections.js';
 
 
 /**
@@ -133,7 +133,7 @@ export function identityTransform(input, opt_output, opt_dimension) {
  * @api
  */
 export function addProjection(projection) {
-  projections.add(projection.getCode(), projection);
+  addProj(projection.getCode(), projection);
   addTransformFunc(projection, projection, cloneTransform);
 }
 
@@ -157,7 +157,7 @@ export function addProjections(projections) {
  */
 export function get(projectionLike) {
   return typeof projectionLike === 'string' ?
-    projections.get(/** @type {string} */ (projectionLike)) :
+    getProj(/** @type {string} */ (projectionLike)) :
     (/** @type {Projection} */ (projectionLike) || null);
 }
 
@@ -271,7 +271,7 @@ export function addEquivalentTransforms(projections1, projections2, forwardTrans
  * Clear all cached projections and transforms.
  */
 export function clearAllProjections() {
-  projections.clear();
+  clearProj();
   clearTransformFuncs();
 }
 
@@ -496,6 +496,105 @@ export function transformExtent(extent, source, destination) {
 export function transformWithProjections(point, sourceProjection, destinationProjection) {
   const transformFunc = getTransformFromProjections(sourceProjection, destinationProjection);
   return transformFunc(point);
+}
+
+/**
+ * @type {?Projection}
+ */
+let userProjection = null;
+
+/**
+ * Set the projection for coordinates supplied from and returned by API methods.
+ * Note that this method is not yet a part of the stable API.  Support for user
+ * projections is not yet complete and should be considered experimental.
+ * @param {ProjectionLike} projection The user projection.
+ */
+export function setUserProjection(projection) {
+  userProjection = get(projection);
+}
+
+/**
+ * Clear the user projection if set.  Note that this method is not yet a part of
+ * the stable API.  Support for user projections is not yet complete and should
+ * be considered experimental.
+ */
+export function clearUserProjection() {
+  userProjection = null;
+}
+
+/**
+ * Get the projection for coordinates supplied from and returned by API methods.
+ * Note that this method is not yet a part of the stable API.  Support for user
+ * projections is not yet complete and should be considered experimental.
+ * @returns {?Projection} The user projection (or null if not set).
+ */
+export function getUserProjection() {
+  return userProjection;
+}
+
+/**
+ * Use geographic coordinates (WGS-84 datum) in API methods.  Note that this
+ * method is not yet a part of the stable API.  Support for user projections is
+ * not yet complete and should be considered experimental.
+ */
+export function useGeographic() {
+  setUserProjection('EPSG:4326');
+}
+
+/**
+ * Return a coordinate transformed into the user projection.  If no user projection
+ * is set, the original coordinate is returned.
+ * @param {Array<number>} coordinate Input coordinate.
+ * @param {ProjectionLike} sourceProjection The input coordinate projection.
+ * @returns {Array<number>} The input coordinate in the user projection.
+ */
+export function toUserCoordinate(coordinate, sourceProjection) {
+  if (!userProjection) {
+    return coordinate;
+  }
+  return transform(coordinate, sourceProjection, userProjection);
+}
+
+/**
+ * Return a coordinate transformed from the user projection.  If no user projection
+ * is set, the original coordinate is returned.
+ * @param {Array<number>} coordinate Input coordinate.
+ * @param {ProjectionLike} destProjection The destination projection.
+ * @returns {Array<number>} The input coordinate transformed.
+ */
+export function fromUserCoordinate(coordinate, destProjection) {
+  if (!userProjection) {
+    return coordinate;
+  }
+  return transform(coordinate, userProjection, destProjection);
+}
+
+/**
+ * Return an extent transformed into the user projection.  If no user projection
+ * is set, the original extent is returned.
+ * @param {import("./extent.js").Extent} extent Input extent.
+ * @param {ProjectionLike} sourceProjection The input extent projection.
+ * @returns {import("./extent.js").Extent} The input extent in the user projection.
+ */
+export function toUserExtent(extent, sourceProjection) {
+  if (!userProjection) {
+    return extent;
+  }
+  return transformExtent(extent, sourceProjection, userProjection);
+}
+
+/**
+ * Return an extent transformed from the user projection.  If no user projection
+ * is set, the original extent is returned.
+ * @param {import("./extent.js").Extent} extent Input extent.
+ * @param {ProjectionLike} destProjection The destination projection.
+ * @returns {import("./extent.js").Extent} The input extent transformed.
+ */
+export function fromUserExtent(extent, destProjection) {
+  if (!userProjection) {
+    return extent;
+  }
+  return transformExtent(extent, userProjection, destProjection);
 }
 
 /**

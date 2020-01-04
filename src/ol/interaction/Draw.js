@@ -7,7 +7,6 @@ import MapBrowserEventType from '../MapBrowserEventType.js';
 import MapBrowserPointerEvent from '../MapBrowserPointerEvent.js';
 import {getChangeEventType} from '../Object.js';
 import {squaredDistance as squaredCoordinateDistance} from '../coordinate.js';
-import {listen} from '../events.js';
 import Event from '../events/Event.js';
 import {noModifierKeys, always, shiftKeyOnly} from '../events/condition.js';
 import {boundingExtent, getBottomLeft, getBottomRight, getTopLeft, getTopRight} from '../extent.js';
@@ -18,7 +17,6 @@ import LineString from '../geom/LineString.js';
 import MultiLineString from '../geom/MultiLineString.js';
 import MultiPoint from '../geom/MultiPoint.js';
 import MultiPolygon from '../geom/MultiPolygon.js';
-import {POINTER_TYPE} from '../pointer/MouseSource.js';
 import Point from '../geom/Point.js';
 import Polygon, {fromCircle, makeRegular} from '../geom/Polygon.js';
 import PointerInteraction from './Pointer.js';
@@ -26,6 +24,7 @@ import InteractionProperty from './Property.js';
 import VectorLayer from '../layer/Vector.js';
 import VectorSource from '../source/Vector.js';
 import {createEditingStyle} from '../style/Style.js';
+import {fromUserCoordinate, getUserProjection} from '../proj.js';
 
 
 /**
@@ -106,11 +105,12 @@ import {createEditingStyle} from '../style/Style.js';
 
 
 /**
- * Function that takes an array of coordinates and an optional existing geometry as
- * arguments, and returns a geometry. The optional existing geometry is the
- * geometry that is returned when the function is called without a second
- * argument.
- * @typedef {function(!SketchCoordType, import("../geom/SimpleGeometry.js").default=):
+ * Function that takes an array of coordinates and an optional existing geometry
+ * and a projection as arguments, and returns a geometry. The optional existing
+ * geometry is the geometry that is returned when the function is called without
+ * a second argument.
+ * @typedef {function(!SketchCoordType, import("../geom/SimpleGeometry.js").default=,
+ *     import("../proj/Projection.js").default):
  *     import("../geom/SimpleGeometry.js").default} GeometryFunction
  */
 
@@ -298,14 +298,20 @@ class Draw extends PointerInteraction {
         /**
          * @param {!LineCoordType} coordinates The coordinates.
          * @param {import("../geom/SimpleGeometry.js").default=} opt_geometry Optional geometry.
+         * @param {import("../proj/Projection.js").default} projection The view projection.
          * @return {import("../geom/SimpleGeometry.js").default} A geometry.
          */
-        geometryFunction = function(coordinates, opt_geometry) {
+        geometryFunction = function(coordinates, opt_geometry, projection) {
           const circle = opt_geometry ? /** @type {Circle} */ (opt_geometry) :
             new Circle([NaN, NaN]);
+          const center = fromUserCoordinate(coordinates[0], projection);
           const squaredLength = squaredCoordinateDistance(
-            coordinates[0], coordinates[1]);
-          circle.setCenterAndRadius(coordinates[0], Math.sqrt(squaredLength));
+            center, fromUserCoordinate(coordinates[1], projection));
+          circle.setCenterAndRadius(center, Math.sqrt(squaredLength));
+          const userProjection = getUserProjection();
+          if (userProjection) {
+            circle.transform(projection, userProjection);
+          }
           return circle;
         };
       } else {
@@ -321,9 +327,10 @@ class Draw extends PointerInteraction {
         /**
          * @param {!LineCoordType} coordinates The coordinates.
          * @param {import("../geom/SimpleGeometry.js").default=} opt_geometry Optional geometry.
+         * @param {import("../proj/Projection.js").default} projection The view projection.
          * @return {import("../geom/SimpleGeometry.js").default} A geometry.
          */
-        geometryFunction = function(coordinates, opt_geometry) {
+        geometryFunction = function(coordinates, opt_geometry, projection) {
           let geometry = opt_geometry;
           if (geometry) {
             if (mode === Mode.POLYGON) {
@@ -373,7 +380,7 @@ class Draw extends PointerInteraction {
 
     /**
      * Sketch point.
-     * @type {Feature}
+     * @type {Feature<Point>}
      * @private
      */
     this.sketchPoint_ = null;
@@ -387,7 +394,7 @@ class Draw extends PointerInteraction {
 
     /**
      * Sketch line. Used when drawing polygon.
-     * @type {Feature}
+     * @type {Feature<LineString>}
      * @private
      */
     this.sketchLine_ = null;
@@ -419,8 +426,7 @@ class Draw extends PointerInteraction {
         useSpatialIndex: false,
         wrapX: options.wrapX ? options.wrapX : false
       }),
-      style: options.style ? options.style :
-        getDefaultStyleFunction(),
+      style: options.style ? options.style : getDefaultStyleFunction(),
       updateWhileInteracting: true
     });
 
@@ -445,13 +451,10 @@ class Draw extends PointerInteraction {
     if (options.freehand) {
       this.freehandCondition_ = always;
     } else {
-      this.freehandCondition_ = options.freehandCondition ?
-        options.freehandCondition : shiftKeyOnly;
+      this.freehandCondition_ = options.freehandCondition ? options.freehandCondition : shiftKeyOnly;
     }
 
-    listen(this,
-      getChangeEventType(InteractionProperty.ACTIVE),
-      this.updateState_, this);
+    this.addEventListener(getChangeEventType(InteractionProperty.ACTIVE), this.updateState_);
 
   }
 
@@ -511,7 +514,7 @@ class Draw extends PointerInteraction {
       pass = event.type === MapBrowserEventType.POINTERMOVE;
       if (pass && this.freehand_) {
         pass = this.handlePointerMove_(event);
-      } else if (/** @type {MapBrowserPointerEvent} */ (event).pointerEvent.pointerType == POINTER_TYPE ||
+      } else if (/** @type {MapBrowserPointerEvent} */ (event).pointerEvent.pointerType == 'mouse' ||
           (event.type === MapBrowserEventType.POINTERDRAG && this.downTimeout_ === undefined)) {
         this.handlePointerMove_(event);
       }
@@ -669,7 +672,7 @@ class Draw extends PointerInteraction {
       this.sketchPoint_ = new Feature(new Point(coordinates));
       this.updateSketchFeatures_();
     } else {
-      const sketchPointGeom = /** @type {Point} */ (this.sketchPoint_.getGeometry());
+      const sketchPointGeom = this.sketchPoint_.getGeometry();
       sketchPointGeom.setCoordinates(coordinates);
     }
   }
@@ -681,6 +684,7 @@ class Draw extends PointerInteraction {
    */
   startDrawing_(event) {
     const start = event.coordinate;
+    const projection = event.map.getView().getProjection();
     this.finishCoordinate_ = start;
     if (this.mode_ === Mode.POINT) {
       this.sketchCoords_ = start.slice();
@@ -694,7 +698,7 @@ class Draw extends PointerInteraction {
       this.sketchLine_ = new Feature(
         new LineString(this.sketchLineCoords_));
     }
-    const geometry = this.geometryFunction_(this.sketchCoords_);
+    const geometry = this.geometryFunction_(this.sketchCoords_, undefined, projection);
     this.sketchFeature_ = new Feature();
     if (this.geometryName_) {
       this.sketchFeature_.setGeometryName(this.geometryName_);
@@ -711,7 +715,8 @@ class Draw extends PointerInteraction {
    */
   modifyDrawing_(event) {
     let coordinate = event.coordinate;
-    const geometry = /** @type {import("../geom/SimpleGeometry.js").default} */ (this.sketchFeature_.getGeometry());
+    const geometry = this.sketchFeature_.getGeometry();
+    const projection = event.map.getView().getProjection();
     let coordinates, last;
     if (this.mode_ === Mode.POINT) {
       last = this.sketchCoords_;
@@ -728,9 +733,9 @@ class Draw extends PointerInteraction {
     }
     last[0] = coordinate[0];
     last[1] = coordinate[1];
-    this.geometryFunction_(/** @type {!LineCoordType} */ (this.sketchCoords_), geometry);
+    this.geometryFunction_(/** @type {!LineCoordType} */ (this.sketchCoords_), geometry, projection);
     if (this.sketchPoint_) {
-      const sketchPointGeom = /** @type {Point} */ (this.sketchPoint_.getGeometry());
+      const sketchPointGeom = this.sketchPoint_.getGeometry();
       sketchPointGeom.setCoordinates(coordinate);
     }
     /** @type {LineString} */
@@ -740,8 +745,8 @@ class Draw extends PointerInteraction {
       if (!this.sketchLine_) {
         this.sketchLine_ = new Feature();
       }
-      const ring = /** @type {Polygon} */ (geometry).getLinearRing(0);
-      sketchLineGeom = /** @type {LineString} */ (this.sketchLine_.getGeometry());
+      const ring = geometry.getLinearRing(0);
+      sketchLineGeom = this.sketchLine_.getGeometry();
       if (!sketchLineGeom) {
         sketchLineGeom = new LineString(ring.getFlatCoordinates(), ring.getLayout());
         this.sketchLine_.setGeometry(sketchLineGeom);
@@ -751,7 +756,7 @@ class Draw extends PointerInteraction {
         sketchLineGeom.changed();
       }
     } else if (this.sketchLineCoords_) {
-      sketchLineGeom = /** @type {LineString} */ (this.sketchLine_.getGeometry());
+      sketchLineGeom = this.sketchLine_.getGeometry();
       sketchLineGeom.setCoordinates(this.sketchLineCoords_);
     }
     this.updateSketchFeatures_();
@@ -764,7 +769,8 @@ class Draw extends PointerInteraction {
    */
   addToDrawing_(event) {
     const coordinate = event.coordinate;
-    const geometry = /** @type {import("../geom/SimpleGeometry.js").default} */ (this.sketchFeature_.getGeometry());
+    const geometry = this.sketchFeature_.getGeometry();
+    const projection = event.map.getView().getProjection();
     let done;
     let coordinates;
     if (this.mode_ === Mode.LINE_STRING) {
@@ -778,7 +784,7 @@ class Draw extends PointerInteraction {
         }
       }
       coordinates.push(coordinate.slice());
-      this.geometryFunction_(coordinates, geometry);
+      this.geometryFunction_(coordinates, geometry, projection);
     } else if (this.mode_ === Mode.POLYGON) {
       coordinates = /** @type {PolyCoordType} */ (this.sketchCoords_)[0];
       if (coordinates.length >= this.maxPoints_) {
@@ -792,7 +798,7 @@ class Draw extends PointerInteraction {
       if (done) {
         this.finishCoordinate_ = coordinates[0];
       }
-      this.geometryFunction_(this.sketchCoords_, geometry);
+      this.geometryFunction_(this.sketchCoords_, geometry, projection);
     }
     this.updateSketchFeatures_();
     if (done) {
@@ -808,23 +814,24 @@ class Draw extends PointerInteraction {
     if (!this.sketchFeature_) {
       return;
     }
-    const geometry = /** @type {import("../geom/SimpleGeometry.js").default} */ (this.sketchFeature_.getGeometry());
+    const geometry = this.sketchFeature_.getGeometry();
+    const projection = this.getMap().getView().getProjection();
     let coordinates;
     /** @type {LineString} */
     let sketchLineGeom;
     if (this.mode_ === Mode.LINE_STRING) {
       coordinates = /** @type {LineCoordType} */ (this.sketchCoords_);
       coordinates.splice(-2, 1);
-      this.geometryFunction_(coordinates, geometry);
+      this.geometryFunction_(coordinates, geometry, projection);
       if (coordinates.length >= 2) {
         this.finishCoordinate_ = coordinates[coordinates.length - 2].slice();
       }
     } else if (this.mode_ === Mode.POLYGON) {
       coordinates = /** @type {PolyCoordType} */ (this.sketchCoords_)[0];
       coordinates.splice(-2, 1);
-      sketchLineGeom = /** @type {LineString} */ (this.sketchLine_.getGeometry());
+      sketchLineGeom = this.sketchLine_.getGeometry();
       sketchLineGeom.setCoordinates(coordinates);
-      this.geometryFunction_(this.sketchCoords_, geometry);
+      this.geometryFunction_(this.sketchCoords_, geometry, projection);
     }
 
     if (coordinates.length === 0) {
@@ -846,15 +853,16 @@ class Draw extends PointerInteraction {
       return;
     }
     let coordinates = this.sketchCoords_;
-    const geometry = /** @type {import("../geom/SimpleGeometry.js").default} */ (sketchFeature.getGeometry());
+    const geometry = sketchFeature.getGeometry();
+    const projection = this.getMap().getView().getProjection();
     if (this.mode_ === Mode.LINE_STRING) {
       // remove the redundant last point
       coordinates.pop();
-      this.geometryFunction_(coordinates, geometry);
+      this.geometryFunction_(coordinates, geometry, projection);
     } else if (this.mode_ === Mode.POLYGON) {
       // remove the redundant last point in ring
       /** @type {PolyCoordType} */ (coordinates)[0].pop();
-      this.geometryFunction_(coordinates, geometry);
+      this.geometryFunction_(coordinates, geometry, projection);
       coordinates = geometry.getCoordinates();
     }
 
@@ -887,12 +895,10 @@ class Draw extends PointerInteraction {
   abortDrawing_() {
     this.finishCoordinate_ = null;
     const sketchFeature = this.sketchFeature_;
-    if (sketchFeature) {
-      this.sketchFeature_ = null;
-      this.sketchPoint_ = null;
-      this.sketchLine_ = null;
-      this.overlay_.getSource().clear(true);
-    }
+    this.sketchFeature_ = null;
+    this.sketchPoint_ = null;
+    this.sketchLine_ = null;
+    this.overlay_.getSource().clear(true);
     return sketchFeature;
   }
 
@@ -900,12 +906,12 @@ class Draw extends PointerInteraction {
    * Extend an existing geometry by adding additional points. This only works
    * on features with `LineString` geometries, where the interaction will
    * extend lines by adding points to the end of the coordinates array.
-   * @param {!Feature} feature Feature to be extended.
+   * @param {!Feature<LineString>} feature Feature to be extended.
    * @api
    */
   extend(feature) {
     const geometry = feature.getGeometry();
-    const lineString = /** @type {LineString} */ (geometry);
+    const lineString = geometry;
     this.sketchFeature_ = feature;
     this.sketchCoords_ = lineString.getCoordinates();
     const last = this.sketchCoords_[this.sketchCoords_.length - 1];
@@ -974,9 +980,9 @@ function getDefaultStyleFunction() {
  * @api
  */
 export function createRegularPolygon(opt_sides, opt_angle) {
-  return function(coordinates, opt_geometry) {
-    const center = /** @type {LineCoordType} */ (coordinates)[0];
-    const end = /** @type {LineCoordType} */ (coordinates)[1];
+  return function(coordinates, opt_geometry, projection) {
+    const center = fromUserCoordinate(/** @type {LineCoordType} */ (coordinates)[0], projection);
+    const end = fromUserCoordinate(/** @type {LineCoordType} */ (coordinates)[1], projection);
     const radius = Math.sqrt(
       squaredCoordinateDistance(center, end));
     const geometry = opt_geometry ? /** @type {Polygon} */ (opt_geometry) :
@@ -988,6 +994,10 @@ export function createRegularPolygon(opt_sides, opt_angle) {
       angle = Math.atan(y / x) - (x < 0 ? Math.PI : 0);
     }
     makeRegular(geometry, center, radius, angle);
+    const userProjection = getUserProjection();
+    if (userProjection) {
+      geometry.transform(projection, userProjection);
+    }
     return geometry;
   };
 }
@@ -1002,8 +1012,10 @@ export function createRegularPolygon(opt_sides, opt_angle) {
  */
 export function createBox() {
   return (
-    function(coordinates, opt_geometry) {
-      const extent = boundingExtent(/** @type {LineCoordType} */ (coordinates));
+    function(coordinates, opt_geometry, projection) {
+      const extent = boundingExtent(/** @type {LineCoordType} */ (coordinates).map(function(coordinate) {
+        return fromUserCoordinate(coordinate, projection);
+      }));
       const boxCoordinates = [[
         getBottomLeft(extent),
         getBottomRight(extent),
@@ -1016,6 +1028,10 @@ export function createBox() {
         geometry.setCoordinates(boxCoordinates);
       } else {
         geometry = new Polygon(boxCoordinates);
+      }
+      const userProjection = getUserProjection();
+      if (userProjection) {
+        geometry.transform(projection, userProjection);
       }
       return geometry;
     }

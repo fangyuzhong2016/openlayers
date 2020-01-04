@@ -1,10 +1,59 @@
 ## Upgrade notes
 
-### Next version
+### v6.0.0
 
 #### Backwards incompatible changes
 
-#### Removal of optional this arguments
+##### Usage of `map.forEachLayerAtPixel`
+
+Due to performance considerations, the layers in a map will sometimes be rendered into one
+single canvas instead of separate elements.
+This means `map.forEachLayerAtPixel` will bring up false positives.
+
+The easiest solution to avoid that is to assign different `className` properties to each layer like so:
+```js
+new Layer({
+   // ...
+   className: 'my-layer'
+})
+```
+
+Please note that this may incur a significant performance loss when dealing with many layers and/or
+targetting mobile devices.
+
+##### Removal of `TOUCH` constant from `ol/has`
+
+If you were previously using this constant, you can check if `'ontouchstart'` is defined in `window` instead.
+
+```js
+if ('ontouchstart' in window) {
+  // ...
+}
+```
+
+##### Removal of `GEOLOCATION` constant from `ol/has`
+
+If you were previously using this constant, you can check if `'geolocation'` is defined in `navigator` instead.
+
+```js
+if ('geolocation' in navigator) {
+  // ...
+}
+```
+
+##### Removal of CSS print rules
+
+The CSS media print rules were removed from the `ol.css` file. To get the previous behavior, use the following CSS:
+
+```css
+@media print {
+  .ol-control {
+    display: none;
+  }
+}
+```
+
+##### Removal of optional this arguments
 
 The optional this (i.e. opt_this) arguments were removed from the following methods.
 Please use closures, the es6 arrow function or the bind method to achieve this effect (Bind is explained here:
@@ -32,9 +81,9 @@ Previously, this options only constrained the view *center*. This behaviour can 
 
 As a side effect, the view `rotate` method is gone and has been replaced with `adjustRotation` which takes a delta as input.
 
-##### Zoom is constrained so only one world is visible
+##### The view is constrained so only one world is visible
 
-Previously, maps showed multiple worlds at low zoom levels. Now, the view is restricted to show only one world. To get the previous behavior, configure the `ol/View` with `multiWorld: true`.
+Previously, maps showed multiple worlds at low zoom levels. In addition, it used to be possible to pan off the north or south edge of the world.  Now, the view is restricted to show only one world, and you cannot pan off the edge. To get the previous behavior, configure the `ol/View` with `multiWorld: true`.
 
 ##### Removal of deprecated methods
 
@@ -97,6 +146,14 @@ If you were previously using `VectorTile` layers with `renderMode: 'vector'`, yo
 ##### Removal of the "renderMode" option for vector layers
 
 If you were previously using `Vector` layers with `renderMode: 'image'`, you have to remove this configuration option. Instead, use the new `ol/layer/VectorImage` layer with your `ol/source/Vector`.
+
+##### New declutter behavior
+
+If a map has more than one layer with `declutter` set to true, decluttering now considers all `Vector` and `VectorTile` layers, instead of decluttering each layer separately. Only `VectorImage` layers continue to be decluttered separately. The higher the z-index of a layer, the higher the priority of its decluttered items.
+
+Within a layer, the declutter order has changed. Previously, styles with a lower `zIndex` were prioritized over those with a higher `zIndex`. Now the opposite order is used.
+
+On vector layers, even if decluttered images or texts have a lower z-Index than polygons or lines, they will now be rendered on top of the polygons or lines. For vector tile layers, this was the case already in previous releases.
 
 ##### New `prerender` and `postrender` layer events replace old `precompose`, `render` and `postcompose` events
 
@@ -213,6 +270,18 @@ The non API `getChecksum` functions of the style is also removed.
 The `ol/source/Vector#clear()` method no longer triggers a reload of the data from the server. If you were previously using `clear()` to refetch from the server, you now have to use `refresh()`.
 
 The `ol/source/Vector#refresh()` method now removes all features from the source and triggers a reload of the data from the server. If you were previously using the `refresh()` method to re-render a vector layer, you should instead call `ol/layer/Vector#changed()`.
+
+##### Renaming of `getGetFeatureInfoUrl` to `getFeatureInfoUrl`
+
+The `getGetFeatureInfoUrl` of `ol/source/ImageWMS` and `ol/source/TileWMS` is now called `getFeatureInfoUrl`.
+
+##### `getFeaturesAtPixel` always returns an array
+
+`getFeaturesAtPixel` now returns an empty array instead of null if no features were found.
+
+##### Hit detection with unfilled styles
+
+Hit detection over styled Circle geometry and Circle and RegularShape styles is now consistent with that for styled Polygon geometry. There is no hit detection over the interior of unfilled shapes. To get the previous behavior, specify a Fill style with transparent color.
 
 #### Other changes
 

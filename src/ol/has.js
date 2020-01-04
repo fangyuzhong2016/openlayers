@@ -39,39 +39,28 @@ export const MAC = ua.indexOf('macintosh') !== -1;
  */
 export const DEVICE_PIXEL_RATIO = window.devicePixelRatio || 1;
 
-
 /**
- * Is HTML5 geolocation supported in the current browser?
- * @const
- * @type {boolean}
- * @api
- */
-export const GEOLOCATION = 'geolocation' in navigator;
-
-
-/**
- * True if browser supports touch events.
- * @const
- * @type {boolean}
- * @api
- */
-export const TOUCH = 'ontouchstart' in window;
-
-
-/**
- * True if browser supports pointer events.
- * @const
+ * Image.prototype.decode() is supported.
  * @type {boolean}
  */
-export const POINTER = 'PointerEvent' in window;
-
+export const IMAGE_DECODE = typeof Image !== 'undefined' && Image.prototype.decode;
 
 /**
- * True if browser supports ms pointer events (IE 10).
- * @const
  * @type {boolean}
  */
-export const MSPOINTER = !!(navigator.msPointerEnabled);
+export const PASSIVE_EVENT_LISTENERS = (function() {
+  let passive = false;
+  try {
+    const options = Object.defineProperty({}, 'passive', {
+      get: function() {
+        passive = true;
+      }
+    });
 
-
-export {HAS as WEBGL} from './webgl.js';
+    window.addEventListener('_', null, options);
+    window.removeEventListener('_', null, options);
+  } catch (error) {
+    // passive not supported
+  }
+  return passive;
+})();

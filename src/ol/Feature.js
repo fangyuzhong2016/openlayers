@@ -2,7 +2,7 @@
  * @module ol/Feature
  */
 import {assert} from './asserts.js';
-import {listen, unlisten, unlistenByKey} from './events.js';
+import {listen, unlistenByKey} from './events.js';
 import EventType from './events/EventType.js';
 import BaseObject, {getChangeEventType} from './Object.js';
 
@@ -57,10 +57,11 @@ import BaseObject, {getChangeEventType} from './Object.js';
  * ```
  *
  * @api
+ * @template {import("./geom/Geometry.js").default} Geometry
  */
 class Feature extends BaseObject {
   /**
-   * @param {import("./geom/Geometry.js").default|Object<string, *>=} opt_geometryOrProperties
+   * @param {Geometry|Object<string, *>=} opt_geometryOrProperties
    *     You may pass a Geometry object directly, or an object literal containing
    *     properties. If you pass an object literal, you may include a Geometry
    *     associated with a `geometry` key.
@@ -100,13 +101,11 @@ class Feature extends BaseObject {
      */
     this.geometryChangeKey_ = null;
 
-    listen(
-      this, getChangeEventType(this.geometryName_),
-      this.handleGeometryChanged_, this);
+    this.addEventListener(getChangeEventType(this.geometryName_), this.handleGeometryChanged_);
 
     if (opt_geometryOrProperties) {
       if (typeof /** @type {?} */ (opt_geometryOrProperties).getSimplifiedGeometry === 'function') {
-        const geometry = /** @type {import("./geom/Geometry.js").default} */ (opt_geometryOrProperties);
+        const geometry = /** @type {Geometry} */ (opt_geometryOrProperties);
         this.setGeometry(geometry);
       } else {
         /** @type {Object<string, *>} */
@@ -140,13 +139,13 @@ class Feature extends BaseObject {
    * Get the feature's default geometry.  A feature may have any number of named
    * geometries.  The "default" geometry (the one that is rendered by default) is
    * set when calling {@link module:ol/Feature~Feature#setGeometry}.
-   * @return {import("./geom/Geometry.js").default|undefined} The default geometry for the feature.
+   * @return {Geometry|undefined} The default geometry for the feature.
    * @api
    * @observable
    */
   getGeometry() {
     return (
-      /** @type {import("./geom/Geometry.js").default|undefined} */ (this.get(this.geometryName_))
+      /** @type {Geometry|undefined} */ (this.get(this.geometryName_))
     );
   }
 
@@ -218,7 +217,7 @@ class Feature extends BaseObject {
   /**
    * Set the default geometry for the feature.  This will update the property
    * with the name returned by {@link module:ol/Feature~Feature#getGeometryName}.
-   * @param {import("./geom/Geometry.js").default|undefined} geometry The new geometry.
+   * @param {Geometry|undefined} geometry The new geometry.
    * @api
    * @observable
    */
@@ -232,7 +231,7 @@ class Feature extends BaseObject {
    * styles. If it is `null` the feature has no style (a `null` style).
    * @param {import("./style/Style.js").StyleLike} style Style for this feature.
    * @api
-   * @fires module:ol/events/Event~Event#event:change
+   * @fires module:ol/events/Event~BaseEvent#event:change
    */
   setStyle(style) {
     this.style_ = style;
@@ -247,7 +246,7 @@ class Feature extends BaseObject {
    * {@link module:ol/source/Vector~VectorSource#getFeatureById} method.
    * @param {number|string|undefined} id The feature id.
    * @api
-   * @fires module:ol/events/Event~Event#event:change
+   * @fires module:ol/events/Event~BaseEvent#event:change
    */
   setId(id) {
     this.id_ = id;
@@ -262,13 +261,9 @@ class Feature extends BaseObject {
    * @api
    */
   setGeometryName(name) {
-    unlisten(
-      this, getChangeEventType(this.geometryName_),
-      this.handleGeometryChanged_, this);
+    this.removeEventListener(getChangeEventType(this.geometryName_), this.handleGeometryChanged_);
     this.geometryName_ = name;
-    listen(
-      this, getChangeEventType(this.geometryName_),
-      this.handleGeometryChanged_, this);
+    this.addEventListener(getChangeEventType(this.geometryName_), this.handleGeometryChanged_);
     this.handleGeometryChanged_();
   }
 }

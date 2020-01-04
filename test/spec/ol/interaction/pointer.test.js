@@ -1,6 +1,6 @@
 import Map from '../../../../src/ol/Map.js';
 import MapBrowserPointerEvent from '../../../../src/ol/MapBrowserPointerEvent.js';
-import PointerEvent from '../../../../src/ol/pointer/PointerEvent.js';
+import Event from '../../../../src/ol/events/Event.js';
 import PointerInteraction from '../../../../src/ol/interaction/Pointer.js';
 
 describe('ol.interaction.Pointer', function() {
@@ -12,24 +12,24 @@ describe('ol.interaction.Pointer', function() {
 
     beforeEach(function() {
       const type = 'pointerdown';
-      const pointerEvent = new PointerEvent(type, {
-        type: type,
-        preventDefault: function() {
-          defaultPrevented = true;
-        }
-      });
+      const pointerEvent = new Event();
+      pointerEvent.type = type;
+      pointerEvent.pointerId = 0;
+      pointerEvent.preventDefault = function() {
+        defaultPrevented = true;
+      };
       event = new MapBrowserPointerEvent(type, new Map(), pointerEvent);
       defaultPrevented = false;
     });
 
-    it('prevents default on handled down event', function() {
+    it('does not prevent default on handled down event', function() {
       const interaction = new PointerInteraction({
         handleDownEvent: function() {
           return true;
         }
       });
       interaction.handleEvent(event);
-      expect(defaultPrevented).to.be(true);
+      expect(defaultPrevented).to.be(false);
     });
 
     it('does not prevent default on unhandled down event', function() {

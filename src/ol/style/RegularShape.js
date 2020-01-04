@@ -2,6 +2,7 @@
  * @module ol/style/RegularShape
  */
 
+import {asArray} from '../color.js';
 import {asColorLike} from '../colorlike.js';
 import {createCanvasContext2D} from '../dom.js';
 import ImageState from '../ImageState.js';
@@ -30,10 +31,10 @@ import ImageStyle from './Image.js';
  * @property {import("../colorlike.js").ColorLike} [strokeStyle]
  * @property {number} strokeWidth
  * @property {number} size
- * @property {string} lineCap
+ * @property {CanvasLineCap} lineCap
  * @property {Array<number>} lineDash
  * @property {number} lineDashOffset
- * @property {string} lineJoin
+ * @property {CanvasLineJoin} lineJoin
  * @property {number} miterLimit
  */
 
@@ -97,8 +98,7 @@ class RegularShape extends ImageStyle {
      * @protected
      * @type {number}
      */
-    this.radius_ = /** @type {number} */ (options.radius !== undefined ?
-      options.radius : options.radius1);
+    this.radius_ = options.radius !== undefined ? options.radius : options.radius1;
 
     /**
      * @private
@@ -142,7 +142,7 @@ class RegularShape extends ImageStyle {
      */
     this.hitDetectionImageSize_ = null;
 
-    this.render_();
+    this.render();
 
   }
 
@@ -284,9 +284,7 @@ class RegularShape extends ImageStyle {
   /**
    * @inheritDoc
    */
-  listenImageChange(listener, thisArg) {
-    return undefined;
-  }
+  listenImageChange(listener) {}
 
   /**
    * @inheritDoc
@@ -296,14 +294,14 @@ class RegularShape extends ImageStyle {
   /**
    * @inheritDoc
    */
-  unlistenImageChange(listener, thisArg) {}
+  unlistenImageChange(listener) {}
 
   /**
    * @protected
    */
-  render_() {
-    let lineCap = '';
-    let lineJoin = '';
+  render() {
+    let lineCap = defaultLineCap;
+    let lineJoin = defaultLineJoin;
     let miterLimit = 0;
     let lineDash = null;
     let lineDashOffset = 0;
@@ -338,7 +336,6 @@ class RegularShape extends ImageStyle {
 
     let size = 2 * (this.radius_ + strokeWidth) + 1;
 
-    /** @type {RenderOptions} */
     const renderOptions = {
       strokeStyle: strokeStyle,
       strokeWidth: strokeWidth,
@@ -418,8 +415,8 @@ class RegularShape extends ImageStyle {
         context.setLineDash(renderOptions.lineDash);
         context.lineDashOffset = renderOptions.lineDashOffset;
       }
-      context.lineCap = /** @type {CanvasLineCap} */ (renderOptions.lineCap);
-      context.lineJoin = /** @type {CanvasLineJoin} */ (renderOptions.lineJoin);
+      context.lineCap = renderOptions.lineCap;
+      context.lineJoin = renderOptions.lineJoin;
       context.miterLimit = renderOptions.miterLimit;
       context.stroke();
     }
@@ -432,17 +429,31 @@ class RegularShape extends ImageStyle {
    */
   createHitDetectionCanvas_(renderOptions) {
     this.hitDetectionImageSize_ = [renderOptions.size, renderOptions.size];
+    this.hitDetectionCanvas_ = this.canvas_;
     if (this.fill_) {
-      this.hitDetectionCanvas_ = this.canvas_;
-      return;
+      let color = this.fill_.getColor();
+
+      // determine if fill is transparent (or pattern or gradient)
+      let opacity = 0;
+      if (typeof color === 'string') {
+        color = asArray(color);
+      }
+      if (color === null) {
+        opacity = 1;
+      } else if (Array.isArray(color)) {
+        opacity = color.length === 4 ? color[3] : 1;
+      }
+      if (opacity === 0) {
+
+        // if a transparent fill style is set, create an extra hit-detection image
+        // with a default fill style
+        const context = createCanvasContext2D(renderOptions.size, renderOptions.size);
+        this.hitDetectionCanvas_ = context.canvas;
+
+        this.drawHitDetectionCanvas_(renderOptions, context, 0, 0);
+      }
     }
 
-    // if no fill style is set, create an extra hit-detection image with a
-    // default fill style
-    const context = createCanvasContext2D(renderOptions.size, renderOptions.size);
-    this.hitDetectionCanvas_ = context.canvas;
-
-    this.drawHitDetectionCanvas_(renderOptions, context, 0, 0);
   }
 
   /**

@@ -7,6 +7,7 @@ import CanvasVectorImageLayerRenderer from '../renderer/canvas/VectorImageLayer.
 
 /**
  * @typedef {Object} Options
+ * @property {string} [className='ol-layer'] A CSS class name to set to the layer element.
  * @property {number} [opacity=1] Opacity (0, 1).
  * @property {boolean} [visible=true] Visibility.
  * @property {import("../extent.js").Extent} [extent] The bounding extent for layer rendering.  The layer will not be
@@ -30,9 +31,9 @@ import CanvasVectorImageLayerRenderer from '../renderer/canvas/VectorImageLayer.
  * this layer in its layers collection, and the layer will be rendered on top. This is useful for
  * temporary layers. The standard way to add a layer to a map and have it managed by the map is to
  * use {@link module:ol/Map#addLayer}.
- * @property {boolean} [declutter=false] Declutter images and text. Decluttering is applied to all
- * image and text styles, and the priority is defined by the z-index of the style. Lower z-index
- * means higher priority.
+ * @property {boolean} [declutter=false] Declutter images and text on this layer. The priority is defined
+ * by the `zIndex` of the style and the render order of features. Higher z-index means higher priority.
+ * Within the same z-index, a feature rendered before another has higher priority.
  * @property {import("../style/Style.js").StyleLike} [style] Layer style. See
  * {@link module:ol/style} for default style which will be used if this is not defined.
  * @property {boolean} [updateWhileAnimating=false] When set to `true`, feature batches will
@@ -60,7 +61,7 @@ class VectorImageLayer extends BaseVectorLayer {
    * @param {Options=} opt_options Options.
    */
   constructor(opt_options) {
-    const options = opt_options ? opt_options : /** @type {Options} */ ({});
+    const options = opt_options ? opt_options : {};
 
     const baseOptions = assign({}, options);
     delete baseOptions.imageRatio;

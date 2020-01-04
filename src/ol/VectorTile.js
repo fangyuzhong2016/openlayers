@@ -74,14 +74,6 @@ class VectorTile extends Tile {
   }
 
   /**
-   * @inheritDoc
-   */
-  disposeInternal() {
-    this.setState(TileState.ABORT);
-    super.disposeInternal();
-  }
-
-  /**
    * Get the feature format assigned for reading this tile's features.
    * @return {import("./format/Feature.js").default} Feature format.
    * @api
@@ -113,7 +105,9 @@ class VectorTile extends Tile {
     if (this.state == TileState.IDLE) {
       this.setState(TileState.LOADING);
       this.tileLoadFunction_(this, this.url_);
-      this.loader_(this.extent, this.resolution, this.projection);
+      if (this.loader_) {
+        this.loader_(this.extent, this.resolution, this.projection);
+      }
     }
   }
 

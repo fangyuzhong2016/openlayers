@@ -2,11 +2,9 @@
  * @module ol/Geolocation
  */
 import BaseObject, {getChangeEventType} from './Object.js';
-import {listen} from './events.js';
-import Event from './events/Event.js';
+import BaseEvent from './events/Event.js';
 import EventType from './events/EventType.js';
 import {circular as circularPolygon} from './geom/Polygon.js';
-import {GEOLOCATION} from './has.js';
 import {toRadians} from './math.js';
 import {get as getProjection, getTransformFromProjections, identityTransform} from './proj.js';
 
@@ -32,7 +30,7 @@ const Property = {
  * @classdesc
  * Events emitted on Geolocation error.
  */
-class GeolocationError extends Event {
+class GeolocationError extends BaseEvent {
   /**
    * @param {PositionError} error error object.
    */
@@ -83,7 +81,7 @@ class GeolocationError extends Event {
  *       window.console.log(geolocation.getPosition());
  *     });
  *
- * @fires error
+ * @fires module:ol/events/Event~BaseEvent#event:error
  * @api
  */
 class Geolocation extends BaseObject {
@@ -100,7 +98,7 @@ class Geolocation extends BaseObject {
     /**
      * The unprojected (EPSG:4326) device position.
      * @private
-     * @type {import("./coordinate.js").Coordinate}
+     * @type {?import("./coordinate.js").Coordinate}
      */
     this.position_ = null;
 
@@ -116,12 +114,8 @@ class Geolocation extends BaseObject {
      */
     this.watchId_ = undefined;
 
-    listen(
-      this, getChangeEventType(Property.PROJECTION),
-      this.handleProjectionChanged_, this);
-    listen(
-      this, getChangeEventType(Property.TRACKING),
-      this.handleTrackingChanged_, this);
+    this.addEventListener(getChangeEventType(Property.PROJECTION), this.handleProjectionChanged_);
+    this.addEventListener(getChangeEventType(Property.TRACKING), this.handleTrackingChanged_);
 
     if (options.projection !== undefined) {
       this.setProjection(options.projection);
@@ -160,7 +154,7 @@ class Geolocation extends BaseObject {
    * @private
    */
   handleTrackingChanged_() {
-    if (GEOLOCATION) {
+    if ('geolocation' in navigator) {
       const tracking = this.getTracking();
       if (tracking && this.watchId_ === undefined) {
         this.watchId_ = navigator.geolocation.watchPosition(
@@ -203,12 +197,6 @@ class Geolocation extends BaseObject {
     this.set(Property.ACCURACY_GEOMETRY, geometry);
     this.changed();
   }
-
-  /**
-   * Triggered when the Geolocation returns an error.
-   * @event error
-   * @api
-   */
 
   /**
    * @private

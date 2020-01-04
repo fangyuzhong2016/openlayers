@@ -11,6 +11,7 @@ import {assign} from '../obj.js';
 
 /**
  * @typedef {Object} Options
+ * @property {string} [className='ol-layer'] A CSS class name to set to the layer element.
  * @property {number} [opacity=1] Opacity (0, 1).
  * @property {boolean} [visible=true] Visibility.
  * @property {import("../extent.js").Extent} [extent] The bounding extent for layer rendering.  The layer will not be
@@ -39,15 +40,19 @@ import {assign} from '../obj.js';
  *  * `'hybrid'`: Polygon and line elements are rendered as images, so pixels are scaled during zoom
  *    animations. Point symbols and texts are accurately rendered as vectors and can stay upright on
  *    rotated views.
- *
+ *  * `'vector'`: Everything is rendered as vectors. Use this mode for improved performance on vector
+ *    tile layers with only a few rendered features (e.g. for highlighting a subset of features of
+ *    another layer with the same source).
  * @property {import("../source/VectorTile.js").default} [source] Source.
  * @property {import("../PluggableMap.js").default} [map] Sets the layer as overlay on a map. The map will not manage
  * this layer in its layers collection, and the layer will be rendered on top. This is useful for
  * temporary layers. The standard way to add a layer to a map and have it managed by the map is to
  * use {@link module:ol/Map#addLayer}.
  * @property {boolean} [declutter=false] Declutter images and text. Decluttering is applied to all
- * image and text styles, and the priority is defined by the z-index of the style. Lower z-index
- * means higher priority.
+ * image and text styles of all Vector and VectorTile layers that have set this to `true`. The priority
+ * is defined by the z-index of the layer, the `zIndex` of the style and the render order of features.
+ * Higher z-index means higher priority. Within the same z-index, a feature rendered before another has
+ * higher priority.
  * @property {import("../style/Style.js").StyleLike} [style] Layer style. See
  * {@link module:ol/style} for default style which will be used if this is not defined.
  * @property {boolean} [updateWhileAnimating=false] When set to `true`, feature batches will be
@@ -84,13 +89,14 @@ class VectorTileLayer extends BaseVectorLayer {
     delete baseOptions.preload;
     delete baseOptions.useInterimTilesOnError;
 
-    super(/** @type {import("./Vector.js").Options} */ (baseOptions));
+    super(/** @type {import("./BaseVector.js").Options} */ (baseOptions));
 
     const renderMode = options.renderMode || VectorTileRenderType.HYBRID;
     assert(renderMode == undefined ||
-       renderMode == VectorTileRenderType.IMAGE ||
-       renderMode == VectorTileRenderType.HYBRID,
-    28); // `renderMode` must be `'image'` or `'hybrid'`
+        renderMode == VectorTileRenderType.IMAGE ||
+        renderMode == VectorTileRenderType.HYBRID ||
+        renderMode == VectorTileRenderType.VECTOR,
+    28); // `renderMode` must be `'image'`, `'hybrid'` or `'vector'`.
 
     /**
      * @private
@@ -111,6 +117,24 @@ class VectorTileLayer extends BaseVectorLayer {
    */
   createRenderer() {
     return new CanvasVectorTileLayerRenderer(this);
+  }
+
+  /**
+   * Get the topmost feature that intersects the given pixel on the viewport. Returns a promise
+   * that resolves with an array of features. The array will either contain the topmost feature
+   * when a hit was detected, or it will be empty.
+   *
+   * The hit detection algorithm used for this method is optimized for performance, but is less
+   * accurate than the one used in {@link import("../PluggableMap.js").default#getFeaturesAtPixel}: Text
+   * is not considered, and icons are only represented by their bounding box instead of the exact
+   * image.
+   *
+   * @param {import("../pixel.js").Pixel} pixel Pixel.
+   * @return {Promise<Array<import("../Feature").default>>} Promise that resolves with an array of features.
+   * @api
+   */
+  getFeatures(pixel) {
+    return super.getFeatures(pixel);
   }
 
   /**

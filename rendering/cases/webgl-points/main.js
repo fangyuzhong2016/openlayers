@@ -1,29 +1,25 @@
 import Map from '../../../src/ol/Map.js';
 import View from '../../../src/ol/View.js';
 import TileLayer from '../../../src/ol/layer/Tile.js';
-import XYZ from '../../../src/ol/source/XYZ';
-import {Vector as VectorLayer} from '../../../src/ol/layer';
-import VectorSource from '../../../src/ol/source/Vector';
-import KML from '../../../src/ol/format/KML';
-import WebGLPointsLayerRenderer from '../../../src/ol/renderer/webgl/PointsLayer';
+import XYZ from '../../../src/ol/source/XYZ.js';
+import VectorSource from '../../../src/ol/source/Vector.js';
+import KML from '../../../src/ol/format/KML.js';
+import WebGLPointsLayer from '../../../src/ol/layer/WebGLPoints.js';
 
-class CustomLayer extends VectorLayer {
-  createRenderer() {
-    return new WebGLPointsLayerRenderer(this, {
-      sizeCallback: function() {
-        return 4;
-      }
-    });
-  }
-}
-
-const vector = new CustomLayer({
+const vector = new WebGLPointsLayer({
   source: new VectorSource({
     url: '/data/2012_Earthquakes_Mag5.kml',
     format: new KML({
       extractStyles: false
     })
-  })
+  }),
+  style: {
+    symbol: {
+      symbolType: 'square',
+      size: 4,
+      color: 'white'
+    }
+  }
 });
 
 const raster = new TileLayer({

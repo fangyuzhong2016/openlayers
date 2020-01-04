@@ -3,27 +3,27 @@
  */
 import VectorLayer from './Vector.js';
 import {assign} from '../obj.js';
-import {degreesToStringHDMS} from '../coordinate';
-import Text from '../style/Text';
-import Fill from '../style/Fill';
-import Stroke from '../style/Stroke';
+import {degreesToStringHDMS} from '../coordinate.js';
+import Text from '../style/Text.js';
+import Fill from '../style/Fill.js';
+import Stroke from '../style/Stroke.js';
 import LineString from '../geom/LineString.js';
-import VectorSource from '../source/Vector';
+import VectorSource from '../source/Vector.js';
 import {
   equivalent as equivalentProjection,
   get as getProjection,
   getTransform,
   transformExtent
-} from '../proj';
-import {getCenter, intersects, equals, getIntersection, isEmpty} from '../extent';
-import {clamp} from '../math';
-import Style from '../style/Style';
-import Feature from '../Feature';
-import {bbox} from '../loadingstrategy';
-import {meridian, parallel} from '../geom/flat/geodesic';
-import GeometryLayout from '../geom/GeometryLayout';
-import Point from '../geom/Point';
-import Collection from '../Collection';
+} from '../proj.js';
+import {getCenter, intersects, equals, getIntersection, isEmpty} from '../extent.js';
+import {clamp} from '../math.js';
+import Style from '../style/Style.js';
+import Feature from '../Feature.js';
+import {bbox} from '../loadingstrategy.js';
+import {meridian, parallel} from '../geom/flat/geodesic.js';
+import GeometryLayout from '../geom/GeometryLayout.js';
+import Point from '../geom/Point.js';
+import Collection from '../Collection.js';
 
 
 /**
@@ -52,6 +52,7 @@ const INTERVALS = [
 
 /**
  * @typedef {Object} Options
+ * @property {string} [className='ol-layer'] A CSS class name to set to the layer element.
  * @property {number} [opacity=1] Opacity (0, 1).
  * @property {boolean} [visible=true] Visibility.
  * @property {import("../extent.js").Extent} [extent] The bounding extent for layer rendering.  The layer will not be
@@ -317,10 +318,23 @@ class Graticule extends VectorLayer {
         options.latLabelPosition;
 
       /**
-       * @type {Object.<string,Style>}
+       * @type {Style}
        * @private
        */
-      this.lonLabelStyleCache_ = {};
+      this.lonLabelStyleBase_ = new Style({
+        text: options.lonLabelStyle !== undefined ? options.lonLabelStyle.clone() :
+          new Text({
+            font: '12px Calibri,sans-serif',
+            textBaseline: 'bottom',
+            fill: new Fill({
+              color: 'rgba(0,0,0,1)'
+            }),
+            stroke: new Stroke({
+              color: 'rgba(255,255,255,1)',
+              width: 3
+            })
+          })
+      });
 
       /**
        * @private
@@ -329,31 +343,28 @@ class Graticule extends VectorLayer {
        */
       this.lonLabelStyle_ = function(feature) {
         const label = feature.get('graticule_label');
-        if (!this.lonLabelStyleCache_[label]) {
-          this.lonLabelStyleCache_[label] = new Style({
-            text: options.lonLabelStyle !== undefined ? options.lonLabelStyle :
-              new Text({
-                text: label,
-                font: '12px Calibri,sans-serif',
-                textBaseline: 'bottom',
-                fill: new Fill({
-                  color: 'rgba(0,0,0,1)'
-                }),
-                stroke: new Stroke({
-                  color: 'rgba(255,255,255,1)',
-                  width: 3
-                })
-              })
-          });
-        }
-        return this.lonLabelStyleCache_[label];
+        this.lonLabelStyleBase_.getText().setText(label);
+        return this.lonLabelStyleBase_;
       }.bind(this);
 
       /**
-       * @type {Object.<string,Style>}
+       * @type {Style}
        * @private
        */
-      this.latLabelStyleCache_ = {};
+      this.latLabelStyleBase_ = new Style({
+        text: options.latLabelStyle !== undefined ? options.latLabelStyle.clone() :
+          new Text({
+            font: '12px Calibri,sans-serif',
+            textAlign: 'right',
+            fill: new Fill({
+              color: 'rgba(0,0,0,1)'
+            }),
+            stroke: new Stroke({
+              color: 'rgba(255,255,255,1)',
+              width: 3
+            })
+          })
+      });
 
       /**
        * @private
@@ -362,24 +373,8 @@ class Graticule extends VectorLayer {
        */
       this.latLabelStyle_ = function(feature) {
         const label = feature.get('graticule_label');
-        if (!this.latLabelStyleCache_[label]) {
-          this.latLabelStyleCache_[label] = new Style({
-            text: options.latLabelStyle !== undefined ? options.latLabelStyle :
-              new Text({
-                text: label,
-                font: '12px Calibri,sans-serif',
-                textAlign: 'right',
-                fill: new Fill({
-                  color: 'rgba(0,0,0,1)'
-                }),
-                stroke: new Stroke({
-                  color: 'rgba(255,255,255,1)',
-                  width: 3
-                })
-              })
-          });
-        }
-        return this.latLabelStyleCache_[label];
+        this.latLabelStyleBase_.getText().setText(label);
+        return this.latLabelStyleBase_;
       }.bind(this);
 
       this.meridiansLabels_ = [];
@@ -420,7 +415,7 @@ class Graticule extends VectorLayer {
     });
 
     /**
-     * @type {import("../extent.js").Extent}
+     * @type {?import("../extent.js").Extent}
      */
     this.renderedExtent_ = null;
 
@@ -586,7 +581,8 @@ class Graticule extends VectorLayer {
   createGraticule_(extent, center, resolution, squaredTolerance) {
     const interval = this.getInterval_(resolution);
     if (interval == -1) {
-      this.meridians_.length = this.parallels_.length = 0;
+      this.meridians_.length = 0;
+      this.parallels_.length = 0;
       if (this.meridiansLabels_) {
         this.meridiansLabels_.length = 0;
       }
@@ -713,7 +709,8 @@ class Graticule extends VectorLayer {
     const flatCoordinates = meridian(lon, minLat, maxLat, this.projection_, squaredTolerance);
     let lineString = this.meridians_[index];
     if (!lineString) {
-      lineString = this.meridians_[index] = new LineString(flatCoordinates, GeometryLayout.XY);
+      lineString = new LineString(flatCoordinates, GeometryLayout.XY);
+      this.meridians_[index] = lineString;
     } else {
       lineString.setFlatCoordinates(GeometryLayout.XY, flatCoordinates);
       lineString.changed();

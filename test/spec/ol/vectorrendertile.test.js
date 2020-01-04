@@ -5,7 +5,6 @@ import {listen, listenOnce, unlistenByKey} from '../../../src/ol/events.js';
 import GeoJSON from '../../../src/ol/format/GeoJSON.js';
 import {createXYZ} from '../../../src/ol/tilegrid.js';
 import TileGrid from '../../../src/ol/tilegrid/TileGrid.js';
-import {getKey} from '../../../src/ol/tilecoord.js';
 import EventType from '../../../src/ol/events/EventType.js';
 
 
@@ -28,9 +27,11 @@ describe('ol.VectorRenderTile', function() {
     listen(tile, 'change', function(e) {
       ++calls;
       if (calls === 1) {
-        expect(tile.getState()).to.be(TileState.ERROR);
+        expect(tile.getState()).to.be(TileState.LOADED);
+        expect(tile.hifi).to.be(false);
         setTimeout(function() {
           sourceTile.setState(TileState.LOADED);
+          expect(tile.hifi).to.be(true);
         }, 0);
       } else if (calls === 2) {
         done();
@@ -38,7 +39,7 @@ describe('ol.VectorRenderTile', function() {
     });
   });
 
-  it('sets ERROR state when source tiles fail to load', function(done) {
+  it('sets LOADED state and hifi==false when source tiles fail to load', function(done) {
     const source = new VectorTileSource({
       format: new GeoJSON(),
       url: 'spec/ol/data/unavailable.json'
@@ -48,7 +49,8 @@ describe('ol.VectorRenderTile', function() {
     tile.load();
 
     listen(tile, 'change', function(e) {
-      expect(tile.getState()).to.be(TileState.ERROR);
+      expect(tile.getState()).to.be(TileState.LOADED);
+      expect(tile.hifi).to.be(false);
       done();
     });
   });
@@ -107,14 +109,14 @@ describe('ol.VectorRenderTile', function() {
     tile.load();
     expect(tile.getState()).to.be(TileState.LOADING);
     tile.dispose();
-    expect(source.sourceTilesByTileKey_[getKey(tile)]).to.be(undefined);
+    expect(source.sourceTilesByTileKey_[tile.getKey()]).to.be(undefined);
     expect(tile.getState()).to.be(TileState.ABORT);
   });
 
   it('#dispose() when source tiles are loaded', function(done) {
     const source = new VectorTileSource({
       format: new GeoJSON(),
-      url: 'spec/ol/data/point.json',
+      url: 'spec/ol/data/point.json?{z}/{x}/{y}',
       tileGrid: createXYZ()
     });
     source.getTileGridForProjection = function() {

@@ -10,6 +10,7 @@ import {bbox as bboxStrategy} from '../../../../src/ol/loadingstrategy.js';
 import {get as getProjection, transformExtent, fromLonLat} from '../../../../src/ol/proj.js';
 import VectorSource from '../../../../src/ol/source/Vector.js';
 import GeoJSON from '../../../../src/ol/format/GeoJSON.js';
+import {getUid} from '../../../../src/ol/util.js';
 
 
 describe('ol.source.Vector', function() {
@@ -33,7 +34,7 @@ describe('ol.source.Vector', function() {
       it('does not call the callback', function() {
         const f = sinon.spy();
         vectorSource.forEachFeatureInExtent(infiniteExtent, f);
-        expect(f).not.to.be.called();
+        expect(f.called).to.be(false);
       });
 
     });
@@ -70,7 +71,7 @@ describe('ol.source.Vector', function() {
         const listener = sinon.spy();
         listen(vectorSource, 'change', listener);
         vectorSource.addFeature(pointFeature);
-        expect(listener).to.be.called();
+        expect(listener.called).to.be(true);
       });
 
       it('adds same id features only once', function() {
@@ -157,7 +158,8 @@ describe('ol.source.Vector', function() {
         url: 'spec/ol/source/vectorsource/single-feature.json'
       });
       const target = document.createElement('div');
-      target.style.width = target.style.height = '100px';
+      target.style.width = '100px';
+      target.style.height = '100px';
       document.body.appendChild(target);
       map = new Map({
         target: target,
@@ -248,9 +250,9 @@ describe('ol.source.Vector', function() {
         vectorSource.clear(true);
         expect(vectorSource.getFeatures()).to.eql([]);
         expect(vectorSource.isEmpty()).to.be(true);
-        expect(removeFeatureSpy).not.to.be.called();
+        expect(removeFeatureSpy.called).to.be(false);
         expect(removeFeatureSpy.callCount).to.be(0);
-        expect(clearSourceSpy).to.be.called();
+        expect(clearSourceSpy.called).to.be(true);
         expect(clearSourceSpy.callCount).to.be(1);
       });
 
@@ -262,9 +264,9 @@ describe('ol.source.Vector', function() {
         vectorSource.clear();
         expect(vectorSource.getFeatures()).to.eql([]);
         expect(vectorSource.isEmpty()).to.be(true);
-        expect(removeFeatureSpy).to.be.called();
+        expect(removeFeatureSpy.called).to.be(true);
         expect(removeFeatureSpy.callCount).to.be(features.length);
-        expect(clearSourceSpy).to.be.called();
+        expect(clearSourceSpy.called).to.be(true);
         expect(clearSourceSpy.callCount).to.be(1);
       });
 
@@ -322,14 +324,14 @@ describe('ol.source.Vector', function() {
         const listener = sinon.spy();
         listen(vectorSource, 'change', listener);
         vectorSource.removeFeature(features[0]);
-        expect(listener).to.be.called();
+        expect(listener.called).to.be(true);
       });
 
       it('fires a removefeature event', function() {
         const listener = sinon.spy();
         listen(vectorSource, 'removefeature', listener);
         vectorSource.removeFeature(features[0]);
-        expect(listener).to.be.called();
+        expect(listener.called).to.be(true);
       });
 
     });
@@ -415,7 +417,7 @@ describe('ol.source.Vector', function() {
       const listener = sinon.spy();
       listen(vectorSource, 'change', listener);
       feature.set('foo', 'bar');
-      expect(listener).to.be.called();
+      expect(listener.called).to.be(true);
     });
 
     it('fires a changefeature event when updating a feature', function() {
@@ -426,7 +428,7 @@ describe('ol.source.Vector', function() {
       });
       vectorSource.on('changefeature', listener);
       feature.setStyle(null);
-      expect(listener).to.be.called();
+      expect(listener.called).to.be(true);
     });
 
   });
@@ -519,6 +521,59 @@ describe('ol.source.Vector', function() {
 
   });
 
+  describe('#getFeatureByUid()', function() {
+    let source;
+    beforeEach(function() {
+      source = new VectorSource();
+    });
+
+    it('returns a feature with an id', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      expect(source.getFeatureByUid(getUid(feature))).to.be(feature);
+    });
+
+    it('returns a feature without id', function() {
+      const feature = new Feature();
+      source.addFeature(feature);
+      expect(source.getFeatureByUid(getUid(feature))).to.be(feature);
+    });
+
+    it('returns null when no feature is found', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      const wrongId = 'abcd';
+      expect(source.getFeatureByUid(wrongId)).to.be(null);
+    });
+
+    it('returns null after removing feature', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      const uid = getUid(feature);
+      expect(source.getFeatureByUid(uid)).to.be(feature);
+      source.removeFeature(feature);
+      expect(source.getFeatureByUid(uid)).to.be(null);
+    });
+
+    it('returns null after clear', function() {
+      const feature = new Feature();
+      feature.setId('abcd');
+      source.addFeature(feature);
+      const uid = getUid(feature);
+      expect(source.getFeatureByUid(uid)).to.be(feature);
+      source.clear();
+      expect(source.getFeatureByUid(uid)).to.be(null);
+    });
+
+    it('returns null when no features are present', function() {
+      expect(source.getFeatureByUid('abcd')).to.be(null);
+    });
+
+  });
+
   describe('#loadFeatures', function() {
 
     describe('with the "bbox" strategy', function() {
@@ -538,7 +593,8 @@ describe('ol.source.Vector', function() {
           }
         });
         const div = document.createElement('div');
-        div.style.width = div.style.height = '100px';
+        div.style.width = '100px';
+        div.style.height = '100px';
         document.body.appendChild(div);
         const map = new Map({
           target: div,
@@ -719,6 +775,19 @@ describe('ol.source.Vector', function() {
       expect(source.getFeatures().length).to.be(0);
     });
 
+    it('prevents adding two features with a duplicate id in the collection', function() {
+      source = new VectorSource({
+        features: new Collection()
+      });
+      const feature1 = new Feature();
+      feature1.setId('1');
+      const feature2 = new Feature();
+      feature2.setId('1');
+      const collection = source.getFeaturesCollection();
+      collection.push(feature1);
+      collection.push(feature2);
+      expect(collection.getLength()).to.be(1);
+    });
   });
 
   describe('with a collection of features plus spatial index', function() {

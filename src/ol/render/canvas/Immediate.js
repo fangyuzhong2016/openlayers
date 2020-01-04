@@ -15,6 +15,7 @@ import VectorContext from '../VectorContext.js';
 import {defaultTextAlign, defaultFillStyle, defaultLineCap, defaultLineDash, defaultLineDashOffset, defaultLineJoin, defaultLineWidth, defaultMiterLimit, defaultStrokeStyle, defaultTextBaseline, defaultFont} from '../canvas.js';
 import {create as createTransform, compose as composeTransform} from '../../transform.js';
 
+
 /**
  * @classdesc
  * A concrete subclass of {@link module:ol/render/VectorContext} that implements
@@ -31,8 +32,10 @@ class CanvasImmediateRenderer extends VectorContext {
    * @param {import("../../extent.js").Extent} extent Extent.
    * @param {import("../../transform.js").Transform} transform Transform.
    * @param {number} viewRotation View rotation.
+   * @param {number=} opt_squaredTolerance Optional squared tolerance for simplification.
+   * @param {import("../../proj.js").TransformFunction=} opt_userTransform Transform from user to view projection.
    */
-  constructor(context, pixelRatio, extent, transform, viewRotation) {
+  constructor(context, pixelRatio, extent, transform, viewRotation, opt_squaredTolerance, opt_userTransform) {
     super();
 
     /**
@@ -64,6 +67,18 @@ class CanvasImmediateRenderer extends VectorContext {
      * @type {number}
      */
     this.viewRotation_ = viewRotation;
+
+    /**
+     * @private
+     * @type {number}
+     */
+    this.squaredTolerance_ = opt_squaredTolerance;
+
+    /**
+     * @private
+     * @type {import("../../proj.js").TransformFunction}
+     */
+    this.userTransform_ = opt_userTransform;
 
     /**
      * @private
@@ -425,6 +440,13 @@ class CanvasImmediateRenderer extends VectorContext {
   }
 
   /**
+   * @param {import("../../transform.js").Transform} transform Transform.
+   */
+  setTransform(transform) {
+    this.transform_ = transform;
+  }
+
+  /**
    * Render a geometry into the canvas.  Call
    * {@link module:ol/render/canvas/Immediate#setStyle} first to set the rendering style.
    *
@@ -505,6 +527,9 @@ class CanvasImmediateRenderer extends VectorContext {
    * @override
    */
   drawPoint(geometry) {
+    if (this.squaredTolerance_) {
+      geometry = /** @type {import("../../geom/Point.js").default} */ (geometry.simplifyTransformed(this.squaredTolerance_, this.userTransform_));
+    }
     const flatCoordinates = geometry.getFlatCoordinates();
     const stride = geometry.getStride();
     if (this.image_) {
@@ -523,6 +548,9 @@ class CanvasImmediateRenderer extends VectorContext {
    * @override
    */
   drawMultiPoint(geometry) {
+    if (this.squaredTolerance_) {
+      geometry = /** @type {import("../../geom/MultiPoint.js").default} */ (geometry.simplifyTransformed(this.squaredTolerance_, this.userTransform_));
+    }
     const flatCoordinates = geometry.getFlatCoordinates();
     const stride = geometry.getStride();
     if (this.image_) {
@@ -541,6 +569,9 @@ class CanvasImmediateRenderer extends VectorContext {
    * @override
    */
   drawLineString(geometry) {
+    if (this.squaredTolerance_) {
+      geometry = /** @type {import("../../geom/LineString.js").default} */ (geometry.simplifyTransformed(this.squaredTolerance_, this.userTransform_));
+    }
     if (!intersects(this.extent_, geometry.getExtent())) {
       return;
     }
@@ -567,6 +598,9 @@ class CanvasImmediateRenderer extends VectorContext {
    * @override
    */
   drawMultiLineString(geometry) {
+    if (this.squaredTolerance_) {
+      geometry = /** @type {import("../../geom/MultiLineString.js").default} */ (geometry.simplifyTransformed(this.squaredTolerance_, this.userTransform_));
+    }
     const geometryExtent = geometry.getExtent();
     if (!intersects(this.extent_, geometryExtent)) {
       return;
@@ -598,6 +632,9 @@ class CanvasImmediateRenderer extends VectorContext {
    * @override
    */
   drawPolygon(geometry) {
+    if (this.squaredTolerance_) {
+      geometry = /** @type {import("../../geom/Polygon.js").default} */ (geometry.simplifyTransformed(this.squaredTolerance_, this.userTransform_));
+    }
     if (!intersects(this.extent_, geometry.getExtent())) {
       return;
     }
@@ -632,6 +669,9 @@ class CanvasImmediateRenderer extends VectorContext {
    * @override
    */
   drawMultiPolygon(geometry) {
+    if (this.squaredTolerance_) {
+      geometry = /** @type {import("../../geom/MultiPolygon.js").default} */ (geometry.simplifyTransformed(this.squaredTolerance_, this.userTransform_));
+    }
     if (!intersects(this.extent_, geometry.getExtent())) {
       return;
     }
@@ -679,7 +719,8 @@ class CanvasImmediateRenderer extends VectorContext {
       };
     } else {
       if (contextFillState.fillStyle != fillState.fillStyle) {
-        contextFillState.fillStyle = context.fillStyle = fillState.fillStyle;
+        contextFillState.fillStyle = fillState.fillStyle;
+        context.fillStyle = fillState.fillStyle;
       }
     }
   }
@@ -692,12 +733,12 @@ class CanvasImmediateRenderer extends VectorContext {
     const context = this.context_;
     const contextStrokeState = this.contextStrokeState_;
     if (!contextStrokeState) {
-      context.lineCap = /** @type {CanvasLineCap} */ (strokeState.lineCap);
+      context.lineCap = strokeState.lineCap;
       if (context.setLineDash) {
         context.setLineDash(strokeState.lineDash);
         context.lineDashOffset = strokeState.lineDashOffset;
       }
-      context.lineJoin = /** @type {CanvasLineJoin} */ (strokeState.lineJoin);
+      context.lineJoin = strokeState.lineJoin;
       context.lineWidth = strokeState.lineWidth;
       context.miterLimit = strokeState.miterLimit;
       context.strokeStyle = strokeState.strokeStyle;
@@ -712,30 +753,33 @@ class CanvasImmediateRenderer extends VectorContext {
       };
     } else {
       if (contextStrokeState.lineCap != strokeState.lineCap) {
-        contextStrokeState.lineCap = context.lineCap = /** @type {CanvasLineCap} */ (strokeState.lineCap);
+        contextStrokeState.lineCap = strokeState.lineCap;
+        context.lineCap = strokeState.lineCap;
       }
       if (context.setLineDash) {
         if (!equals(contextStrokeState.lineDash, strokeState.lineDash)) {
           context.setLineDash(contextStrokeState.lineDash = strokeState.lineDash);
         }
         if (contextStrokeState.lineDashOffset != strokeState.lineDashOffset) {
-          contextStrokeState.lineDashOffset = context.lineDashOffset =
-              strokeState.lineDashOffset;
+          contextStrokeState.lineDashOffset = strokeState.lineDashOffset;
+          context.lineDashOffset = strokeState.lineDashOffset;
         }
       }
       if (contextStrokeState.lineJoin != strokeState.lineJoin) {
-        contextStrokeState.lineJoin = context.lineJoin = /** @type {CanvasLineJoin} */ (strokeState.lineJoin);
+        contextStrokeState.lineJoin = strokeState.lineJoin;
+        context.lineJoin = strokeState.lineJoin;
       }
       if (contextStrokeState.lineWidth != strokeState.lineWidth) {
-        contextStrokeState.lineWidth = context.lineWidth = strokeState.lineWidth;
+        contextStrokeState.lineWidth = strokeState.lineWidth;
+        context.lineWidth = strokeState.lineWidth;
       }
       if (contextStrokeState.miterLimit != strokeState.miterLimit) {
-        contextStrokeState.miterLimit = context.miterLimit =
-            strokeState.miterLimit;
+        contextStrokeState.miterLimit = strokeState.miterLimit;
+        context.miterLimit = strokeState.miterLimit;
       }
       if (contextStrokeState.strokeStyle != strokeState.strokeStyle) {
-        contextStrokeState.strokeStyle = context.strokeStyle =
-            strokeState.strokeStyle;
+        contextStrokeState.strokeStyle = strokeState.strokeStyle;
+        context.strokeStyle = strokeState.strokeStyle;
       }
     }
   }
@@ -760,14 +804,16 @@ class CanvasImmediateRenderer extends VectorContext {
       };
     } else {
       if (contextTextState.font != textState.font) {
-        contextTextState.font = context.font = textState.font;
+        contextTextState.font = textState.font;
+        context.font = textState.font;
       }
       if (contextTextState.textAlign != textAlign) {
-        contextTextState.textAlign = context.textAlign = /** @type {CanvasTextAlign} */ (textAlign);
+        contextTextState.textAlign = /** @type {CanvasTextAlign} */ (textAlign);
+        context.textAlign = /** @type {CanvasTextAlign} */ (textAlign);
       }
       if (contextTextState.textBaseline != textState.textBaseline) {
-        contextTextState.textBaseline = context.textBaseline =
-          /** @type {CanvasTextBaseline} */ (textState.textBaseline);
+        contextTextState.textBaseline = /** @type {CanvasTextBaseline} */ (textState.textBaseline);
+        context.textBaseline = /** @type {CanvasTextBaseline} */ (textState.textBaseline);
       }
     }
   }

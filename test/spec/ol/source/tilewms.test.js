@@ -198,12 +198,12 @@ describe('ol.source.TileWMS', function() {
 
   });
 
-  describe('#getGetFeatureInfoUrl', function() {
+  describe('#getFeatureInfoUrl', function() {
 
     it('returns the expected GetFeatureInfo URL', function() {
       const source = new TileWMS(options);
       source.pixelRatio_ = 1;
-      const url = source.getGetFeatureInfoUrl(
+      const url = source.getFeatureInfoUrl(
         [-7000000, -12000000],
         19567.87924100512, getProjection('EPSG:3857'),
         {INFO_FORMAT: 'text/plain'});
@@ -237,7 +237,7 @@ describe('ol.source.TileWMS', function() {
     it('returns the expected GetFeatureInfo URL when source\'s projection is different from the parameter', function() {
       const source = new TileWMS(optionsReproj);
       source.pixelRatio_ = 1;
-      const url = source.getGetFeatureInfoUrl(
+      const url = source.getFeatureInfoUrl(
         [-7000000, -12000000],
         19567.87924100512, getProjection('EPSG:3857'),
         {INFO_FORMAT: 'text/plain'});
@@ -267,7 +267,7 @@ describe('ol.source.TileWMS', function() {
     it('sets the QUERY_LAYERS param as expected', function() {
       const source = new TileWMS(options);
       source.pixelRatio_ = 1;
-      const url = source.getGetFeatureInfoUrl(
+      const url = source.getFeatureInfoUrl(
         [-7000000, -12000000],
         19567.87924100512, getProjection('EPSG:3857'),
         {INFO_FORMAT: 'text/plain', QUERY_LAYERS: 'foo,bar'});
@@ -297,6 +297,72 @@ describe('ol.source.TileWMS', function() {
       expect(queryData.get('WIDTH')).to.be('256');
       expect(uri.hash.replace('#', '')).to.be.empty();
     });
+  });
+
+  describe('#getLegendGraphicUrl', function() {
+
+    it('returns the getLegenGraphic url as expected', function() {
+      const source = new TileWMS(options);
+      const url = source.getLegendUrl(0.1);
+      const uri = new URL(url);
+      expect(uri.protocol).to.be('http:');
+      expect(uri.hostname).to.be('example.com');
+      expect(uri.pathname).to.be('/wms');
+      const queryData = uri.searchParams;
+      expect(queryData.get('FORMAT')).to.be('image/png');
+      expect(queryData.get('LAYER')).to.be('layer');
+      expect(queryData.get('REQUEST')).to.be('GetLegendGraphic');
+      expect(queryData.get('SERVICE')).to.be('WMS');
+      expect(queryData.get('VERSION')).to.be('1.3.0');
+      expect(queryData.get('SCALE')).to.be('357.14214285714274');
+    });
+
+    it('does not include SCALE if no resolution was provided', function() {
+      const source = new TileWMS(options);
+      const url = source.getLegendUrl();
+      const uri = new URL(url);
+      const queryData = uri.searchParams;
+      expect(queryData.get('SCALE')).to.be(null);
+    });
+
+    it('adds additional params as expected', function() {
+      const source = new TileWMS(options);
+      const url = source.getLegendUrl(0.1, {
+        STYLE: 'STYLE_VALUE',
+        FEATURETYPE: 'FEATURETYPE_VALUE',
+        RULE: 'RULE_VALUE',
+        SLD: 'SLD_VALUE',
+        SLD_BODY: 'SLD_BODY_VALUE',
+        FORMAT: 'FORMAT_VALUE',
+        WIDTH: 'WIDTH_VALUE',
+        HEIGHT: 'HEIGHT_VALUE',
+        EXCEPTIONS: 'EXCEPTIONS_VALUE',
+        LANGUAGE: 'LANGUAGE_VALUE',
+        LAYER: 'LAYER_VALUE'
+      });
+      const uri = new URL(url);
+      expect(uri.protocol).to.be('http:');
+      expect(uri.hostname).to.be('example.com');
+      expect(uri.pathname).to.be('/wms');
+      const queryData = uri.searchParams;
+      expect(queryData.get('FORMAT')).to.be('FORMAT_VALUE');
+      expect(queryData.get('LAYER')).to.be('LAYER_VALUE');
+      expect(queryData.get('REQUEST')).to.be('GetLegendGraphic');
+      expect(queryData.get('SERVICE')).to.be('WMS');
+      expect(queryData.get('VERSION')).to.be('1.3.0');
+      expect(queryData.get('SCALE')).to.be('357.14214285714274');
+      expect(queryData.get('STYLE')).to.be('STYLE_VALUE');
+      expect(queryData.get('FEATURETYPE')).to.be('FEATURETYPE_VALUE');
+      expect(queryData.get('RULE')).to.be('RULE_VALUE');
+      expect(queryData.get('SLD')).to.be('SLD_VALUE');
+      expect(queryData.get('SLD_BODY')).to.be('SLD_BODY_VALUE');
+      expect(queryData.get('FORMAT')).to.be('FORMAT_VALUE');
+      expect(queryData.get('WIDTH')).to.be('WIDTH_VALUE');
+      expect(queryData.get('HEIGHT')).to.be('HEIGHT_VALUE');
+      expect(queryData.get('EXCEPTIONS')).to.be('EXCEPTIONS_VALUE');
+      expect(queryData.get('LANGUAGE')).to.be('LANGUAGE_VALUE');
+    });
+
   });
 
   describe('#setUrl()', function() {

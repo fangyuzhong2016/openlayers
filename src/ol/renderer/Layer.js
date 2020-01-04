@@ -4,35 +4,49 @@
 import {abstract} from '../util.js';
 import ImageState from '../ImageState.js';
 import Observable from '../Observable.js';
-import {listen} from '../events.js';
 import EventType from '../events/EventType.js';
 import SourceState from '../source/State.js';
 
+/**
+ * @template {import("../layer/Layer.js").default} LayerType
+ */
 class LayerRenderer extends Observable {
 
   /**
-   * @param {import("../layer/Layer.js").default} layer Layer.
+   * @param {LayerType} layer Layer.
    */
   constructor(layer) {
 
     super();
 
+    /** @private */
+    this.boundHandleImageChange_ = this.handleImageChange_.bind(this);
+
     /**
      * @private
-     * @type {import("../layer/Layer.js").default}
+     * @type {LayerType}
      */
     this.layer_ = layer;
 
   }
 
   /**
+   * Asynchronous layer level hit detection.
+   * @param {import("../pixel.js").Pixel} pixel Pixel.
+   * @return {Promise<Array<import("../Feature").default>>} Promise that resolves with
+   * an array of features.
+   */
+  getFeatures(pixel) {
+    return abstract();
+  }
+
+  /**
    * Determine whether render should be called.
    * @abstract
    * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
-   * @param {import("../layer/Layer.js").State} layerState Layer state.
    * @return {boolean} Layer is ready to be rendered.
    */
-  prepareFrame(frameState, layerState) {
+  prepareFrame(frameState) {
     return abstract();
   }
 
@@ -40,10 +54,10 @@ class LayerRenderer extends Observable {
    * Render the layer.
    * @abstract
    * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
-   * @param {import("../layer/Layer.js").State} layerState Layer state.
+   * @param {HTMLElement} target Target that may be used to render content to.
    * @return {HTMLElement} The rendered element.
    */
-  renderFrame(frameState, layerState) {
+  renderFrame(frameState, target) {
     return abstract();
   }
 
@@ -82,17 +96,17 @@ class LayerRenderer extends Observable {
       }
     ).bind(this);
   }
-
   /**
    * @abstract
    * @param {import("../coordinate.js").Coordinate} coordinate Coordinate.
    * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
    * @param {number} hitTolerance Hit tolerance in pixels.
    * @param {function(import("../Feature.js").FeatureLike, import("../layer/Layer.js").default): T} callback Feature callback.
+   * @param {Array<import("../Feature.js").FeatureLike>} declutteredFeatures Decluttered features.
    * @return {T|void} Callback result.
    * @template T
    */
-  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback) {}
+  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures) {}
 
   /**
    * @abstract
@@ -108,11 +122,17 @@ class LayerRenderer extends Observable {
   }
 
   /**
-   * @return {import("../layer/Layer.js").default} Layer.
+   * @return {LayerType} Layer.
    */
   getLayer() {
     return this.layer_;
   }
+
+  /**
+   * Perform action necessary to get the layer rendered after new fonts have loaded
+   * @abstract
+   */
+  handleFontsChanged() {}
 
   /**
    * Handle changes in image state.
@@ -127,15 +147,6 @@ class LayerRenderer extends Observable {
   }
 
   /**
-   * @param {import("../coordinate.js").Coordinate} coordinate Coordinate.
-   * @param {import("../PluggableMap.js").FrameState} frameState Frame state.
-   * @return {boolean} Is there a feature at the given coordinate?
-   */
-  hasFeatureAtCoordinate(coordinate, frameState) {
-    return false;
-  }
-
-  /**
    * Load the image if not already loaded, and register the image change
    * listener if needed.
    * @param {import("../ImageBase.js").default} image Image.
@@ -145,7 +156,7 @@ class LayerRenderer extends Observable {
   loadImage(image) {
     let imageState = image.getState();
     if (imageState != ImageState.LOADED && imageState != ImageState.ERROR) {
-      listen(image, EventType.CHANGE, this.handleImageChange_, this);
+      image.addEventListener(EventType.CHANGE, this.boundHandleImageChange_);
     }
     if (imageState == ImageState.IDLE) {
       image.load();

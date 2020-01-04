@@ -3,7 +3,6 @@
  */
 import Collection from '../Collection.js';
 import {getChangeEventType} from '../Object.js';
-import {listen} from '../events.js';
 import Event from '../events/Event.js';
 import {TRUE} from '../functions.js';
 import {includes} from '../array.js';
@@ -35,6 +34,13 @@ const TranslateEventType = {
   TRANSLATEEND: 'translateend'
 };
 
+/**
+ * A function that takes an {@link module:ol/Feature} or
+ * {@link module:ol/render/Feature} and an
+ * {@link module:ol/layer/Layer} and returns `true` if the feature may be
+ * translated or `false` otherwise.
+ * @typedef {function(import("../Feature.js").FeatureLike, import("../layer/Layer.js").default):boolean} FilterFunction
+ */
 
 /**
  * @typedef {Object} Options
@@ -45,6 +51,10 @@ const TranslateEventType = {
  * function will be called for each layer in the map and should return
  * `true` for layers that you want to be translatable. If the option is
  * absent, all visible layers will be considered translatable.
+ * @property {FilterFunction} [filter] A function
+ * that takes an {@link module:ol/Feature} and an
+ * {@link module:ol/layer/Layer} and returns `true` if the feature may be
+ * translated or `false` otherwise.
  * @property {number} [hitTolerance=0] Hit-detection tolerance. Pixels inside the radius around the given position
  * will be checked for features.
  */
@@ -60,8 +70,10 @@ export class TranslateEvent extends Event {
    * @param {TranslateEventType} type Type.
    * @param {Collection<import("../Feature.js").default>} features The features translated.
    * @param {import("../coordinate.js").Coordinate} coordinate The event coordinate.
+   * @param {import("../coordinate.js").Coordinate} startCoordinate The original coordinates before.translation started
+   * @param {import("../MapBrowserEvent.js").default} mapBrowserEvent Map browser event.
    */
-  constructor(type, features, coordinate) {
+  constructor(type, features, coordinate, startCoordinate, mapBrowserEvent) {
 
     super(type);
 
@@ -79,6 +91,21 @@ export class TranslateEvent extends Event {
      * @api
      */
     this.coordinate = coordinate;
+
+    /**
+     * The coordinate of the start position before translation started.
+     * @const
+     * @type {import("../coordinate.js").Coordinate}
+     * @api
+     */
+    this.startCoordinate = startCoordinate;
+
+    /**
+     * Associated {@link module:ol/MapBrowserEvent}.
+     * @type {import("../MapBrowserEvent.js").default}
+     * @api
+     */
+    this.mapBrowserEvent = mapBrowserEvent;
 
   }
 
@@ -107,6 +134,13 @@ class Translate extends PointerInteraction {
      * @private
      */
     this.lastCoordinate_ = null;
+
+    /**
+     * The start position before translation started.
+     * @type {import("../coordinate.js").Coordinate}
+     * @private
+     */
+    this.startCoordinate_ = null;
 
 
     /**
@@ -138,6 +172,12 @@ class Translate extends PointerInteraction {
 
     /**
      * @private
+     * @type {FilterFunction}
+     */
+    this.filter_ = options.filter ? options.filter : TRUE;
+
+    /**
+     * @private
      * @type {number}
      */
     this.hitTolerance_ = options.hitTolerance ? options.hitTolerance : 0;
@@ -148,9 +188,7 @@ class Translate extends PointerInteraction {
      */
     this.lastFeature_ = null;
 
-    listen(this,
-      getChangeEventType(InteractionProperty.ACTIVE),
-      this.handleActiveChanged_, this);
+    this.addEventListener(getChangeEventType(InteractionProperty.ACTIVE), this.handleActiveChanged_);
 
   }
 
@@ -160,6 +198,7 @@ class Translate extends PointerInteraction {
   handleDownEvent(event) {
     this.lastFeature_ = this.featuresAtPixel_(event.pixel, event.map);
     if (!this.lastCoordinate_ && this.lastFeature_) {
+      this.startCoordinate_ = event.coordinate;
       this.lastCoordinate_ = event.coordinate;
       this.handleMoveEvent(event);
 
@@ -168,7 +207,7 @@ class Translate extends PointerInteraction {
       this.dispatchEvent(
         new TranslateEvent(
           TranslateEventType.TRANSLATESTART, features,
-          event.coordinate));
+          event.coordinate, this.startCoordinate_, event));
       return true;
     }
     return false;
@@ -187,7 +226,9 @@ class Translate extends PointerInteraction {
       this.dispatchEvent(
         new TranslateEvent(
           TranslateEventType.TRANSLATEEND, features,
-          event.coordinate));
+          event.coordinate, this.startCoordinate_, event));
+      // cleanup
+      this.startCoordinate_ = null;
       return true;
     }
     return false;
@@ -214,7 +255,7 @@ class Translate extends PointerInteraction {
       this.dispatchEvent(
         new TranslateEvent(
           TranslateEventType.TRANSLATING, features,
-          newCoordinate));
+          newCoordinate, this.startCoordinate_, event));
     }
   }
 
@@ -245,9 +286,11 @@ class Translate extends PointerInteraction {
    */
   featuresAtPixel_(pixel, map) {
     return map.forEachFeatureAtPixel(pixel,
-      function(feature) {
-        if (!this.features_ || includes(this.features_.getArray(), feature)) {
-          return feature;
+      function(feature, layer) {
+        if (this.filter_(feature, layer)) {
+          if (!this.features_ || includes(this.features_.getArray(), feature)) {
+            return feature;
+          }
         }
       }.bind(this), {
         layerFilter: this.layerFilter_,

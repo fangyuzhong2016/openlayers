@@ -7,7 +7,6 @@ import Point from '../../../../src/ol/geom/Point.js';
 import Translate, {TranslateEvent} from '../../../../src/ol/interaction/Translate.js';
 import Interaction from '../../../../src/ol/interaction/Interaction.js';
 import VectorLayer from '../../../../src/ol/layer/Vector.js';
-import PointerEvent from '../../../../src/ol/pointer/PointerEvent.js';
 import VectorSource from '../../../../src/ol/source/Vector.js';
 
 
@@ -213,6 +212,47 @@ describe('ol.interaction.Translate', function() {
       expect(features[1].getGeometry().getCoordinates()).to.eql([20, -30]);
 
       validateEvents(events, [features[0]]);
+    });
+  });
+
+  describe('moving features, with filter option', function() {
+    let translate;
+
+    beforeEach(function() {
+      translate = new Translate({
+        filter: function(feature, layer) {
+          return feature == features[0];
+        }
+      });
+      map.addInteraction(translate);
+    });
+
+    it('moves a filter-passing feature', function() {
+      const events = trackEvents(features[0], translate);
+
+      simulateEvent('pointermove', 10, 20);
+      simulateEvent('pointerdown', 10, 20);
+      simulateEvent('pointerdrag', 50, -40);
+      simulateEvent('pointerup', 50, -40);
+      const geometry = features[0].getGeometry();
+      expect(geometry).to.be.a(Point);
+      expect(geometry.getCoordinates()).to.eql([50, 40]);
+
+      validateEvents(events, [features[0]]);
+    });
+
+    it('does not move a filter-discarded feature', function() {
+      const events = trackEvents(features[0], translate);
+
+      simulateEvent('pointermove', 20, 30);
+      simulateEvent('pointerdown', 20, 30);
+      simulateEvent('pointerdrag', 50, -40);
+      simulateEvent('pointerup', 50, -40);
+      const geometry = features[1].getGeometry();
+      expect(geometry).to.be.a(Point);
+      expect(geometry.getCoordinates()).to.eql([20, -30]);
+
+      expect(events).to.be.empty();
     });
   });
 

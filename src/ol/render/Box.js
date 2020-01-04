@@ -74,7 +74,10 @@ class RenderBox extends Disposable {
     if (this.map_) {
       this.map_.getOverlayContainer().removeChild(this.element_);
       const style = this.element_.style;
-      style.left = style.top = style.width = style.height = 'inherit';
+      style.left = 'inherit';
+      style.top = 'inherit';
+      style.width = 'inherit';
+      style.height = 'inherit';
     }
     this.map_ = map;
     if (this.map_) {
@@ -105,7 +108,7 @@ class RenderBox extends Disposable {
       endPixel,
       [endPixel[0], startPixel[1]]
     ];
-    const coordinates = pixels.map(this.map_.getCoordinateFromPixel, this.map_);
+    const coordinates = pixels.map(this.map_.getCoordinateFromPixelInternal, this.map_);
     // close the polygon
     coordinates[4] = coordinates[0].slice();
     if (!this.geometry_) {

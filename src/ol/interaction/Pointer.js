@@ -20,9 +20,11 @@ import {getValues} from '../obj.js';
  * propagation of the event to other interactions in the map's interactions
  * chain.
  * @property {function(import("../MapBrowserPointerEvent.js").default)} [handleMoveEvent]
- * Function handling "move" events. This function is called on "move" events,
- * also during a drag sequence (so during a drag sequence both the
- * `handleDragEvent` function and this function are called).
+ * Function handling "move" events. This function is called on "move" events.
+ * This functions is also called during a drag sequence, so during a drag
+ * sequence both the `handleDragEvent` function and this function are called.
+ * If `handleDownEvent` is defined and it returns true this function will not
+ * be called during a drag sequence.
  * @property {function(import("../MapBrowserPointerEvent.js").default):boolean} [handleUpEvent]
  *  Function handling "up" events. If the function returns `false` then the
  * current drag sequence is stopped.
@@ -80,17 +82,27 @@ class PointerInteraction extends Interaction {
     this.handlingDownUpSequence = false;
 
     /**
-     * @type {!Object<string, import("../pointer/PointerEvent.js").default>}
+     * @type {!Object<string, PointerEvent>}
      * @private
      */
     this.trackedPointers_ = {};
 
     /**
-     * @type {Array<import("../pointer/PointerEvent.js").default>}
+     * @type {Array<PointerEvent>}
      * @protected
      */
     this.targetPointers = [];
 
+  }
+
+  /**
+   * Returns the current number of pointers involved in the interaction,
+   * e.g. `2` when two fingers are used.
+   * @return {number} The number of pointers.
+   * @api
+   */
+  getPointerCount() {
+    return this.targetPointers.length;
   }
 
   /**
@@ -134,9 +146,6 @@ class PointerInteraction extends Interaction {
     } else {
       if (mapBrowserEvent.type == MapBrowserEventType.POINTERDOWN) {
         const handled = this.handleDownEvent(mapBrowserEvent);
-        if (handled) {
-          mapBrowserEvent.preventDefault();
-        }
         this.handlingDownUpSequence = handled;
         stopEvent = this.stopDown(handled);
       } else if (mapBrowserEvent.type == MapBrowserEventType.POINTERMOVE) {
@@ -199,7 +208,7 @@ class PointerInteraction extends Interaction {
 
 
 /**
- * @param {Array<import("../pointer/PointerEvent.js").default>} pointerEvents List of events.
+ * @param {Array<PointerEvent>} pointerEvents List of events.
  * @return {import("../pixel.js").Pixel} Centroid pixel.
  */
 export function centroid(pointerEvents) {

@@ -49,7 +49,7 @@ describe('ol.renderer.canvas.TileLayer', function() {
       });
       source.updateParams({TIME: '1'});
       map.renderSync();
-      const tiles = map.getRenderer().getLayerRenderer(layer).renderedTiles;
+      const tiles = layer.getRenderer().renderedTiles;
       expect(tiles.length).to.be(1);
       expect(tiles[0]).to.equal(tile);
       expect(tile.inTransition()).to.be(true);
@@ -83,6 +83,17 @@ describe('ol.renderer.canvas.TileLayer', function() {
       expect(tileCache.highWaterMark).to.be(1);
       map.once('rendercomplete', function() {
         expect(tileCache.highWaterMark).to.be(2);
+        done();
+      });
+    });
+
+    it('respects the source\'s zDirection setting', function(done) {
+      layer.getSource().zDirection = 1;
+      map.getView().setZoom(5.8); // would lead to z6 tile request with the default zDirection
+      map.once('rendercomplete', function() {
+        const tileCache = layer.getSource().tileCache;
+        const keys = tileCache.getKeys();
+        expect(keys.some(key => key.startsWith('6/'))).to.be(false);
         done();
       });
     });

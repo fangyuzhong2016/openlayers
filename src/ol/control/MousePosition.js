@@ -1,11 +1,13 @@
 /**
  * @module ol/control/MousePosition
  */
+
+import 'elm-pep';
 import {listen} from '../events.js';
-import EventType from '../events/EventType.js';
+import EventType from '../pointer/EventType.js';
 import {getChangeEventType} from '../Object.js';
 import Control from './Control.js';
-import {getTransformFromProjections, identityTransform, get as getProjection} from '../proj.js';
+import {getTransformFromProjections, identityTransform, get as getProjection, getUserProjection} from '../proj.js';
 
 
 /**
@@ -67,9 +69,7 @@ class MousePosition extends Control {
       target: options.target
     });
 
-    listen(this,
-      getChangeEventType(PROJECTION),
-      this.handleProjectionChanged_, this);
+    this.addEventListener(getChangeEventType(PROJECTION), this.handleProjectionChanged_);
 
     if (options.coordinateFormat) {
       this.setCoordinateFormat(options.coordinateFormat);
@@ -98,7 +98,7 @@ class MousePosition extends Control {
 
     /**
      * @private
-     * @type {import("../proj/Projection.js").default}
+     * @type {?import("../proj/Projection.js").default}
      */
     this.mapProjection_ = null;
 
@@ -107,12 +107,6 @@ class MousePosition extends Control {
      * @type {?import("../proj.js").TransformFunction}
      */
     this.transform_ = null;
-
-    /**
-     * @private
-     * @type {import("../pixel.js").Pixel}
-     */
-    this.lastMouseMovePixel_ = null;
 
   }
 
@@ -156,8 +150,7 @@ class MousePosition extends Control {
    */
   handleMouseMove(event) {
     const map = this.getMap();
-    this.lastMouseMovePixel_ = map.getEventPixel(event);
-    this.updateHTML_(this.lastMouseMovePixel_);
+    this.updateHTML_(map.getEventPixel(event));
   }
 
   /**
@@ -166,7 +159,6 @@ class MousePosition extends Control {
    */
   handleMouseOut(event) {
     this.updateHTML_(null);
-    this.lastMouseMovePixel_ = null;
   }
 
   /**
@@ -178,13 +170,11 @@ class MousePosition extends Control {
     if (map) {
       const viewport = map.getViewport();
       this.listenerKeys.push(
-        listen(viewport, EventType.MOUSEMOVE, this.handleMouseMove, this),
-        listen(viewport, EventType.TOUCHSTART, this.handleMouseMove, this)
+        listen(viewport, EventType.POINTERMOVE, this.handleMouseMove, this)
       );
       if (this.renderOnMouseOut_) {
         this.listenerKeys.push(
-          listen(viewport, EventType.MOUSEOUT, this.handleMouseOut, this),
-          listen(viewport, EventType.TOUCHEND, this.handleMouseOut, this)
+          listen(viewport, EventType.POINTEROUT, this.handleMouseOut, this)
         );
       }
     }
@@ -229,8 +219,13 @@ class MousePosition extends Control {
         }
       }
       const map = this.getMap();
-      const coordinate = map.getCoordinateFromPixel(pixel);
+      const coordinate = map.getCoordinateFromPixelInternal(pixel);
       if (coordinate) {
+        const userProjection = getUserProjection();
+        if (userProjection) {
+          this.transform_ = getTransformFromProjections(
+            this.mapProjection_, userProjection);
+        }
         this.transform_(coordinate, coordinate);
         const coordinateFormat = this.getCoordinateFormat();
         if (coordinateFormat) {

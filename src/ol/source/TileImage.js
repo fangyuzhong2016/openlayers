@@ -6,7 +6,6 @@ import {getUid} from '../util.js';
 import ImageTile from '../ImageTile.js';
 import TileCache from '../TileCache.js';
 import TileState from '../TileState.js';
-import {listen} from '../events.js';
 import EventType from '../events/EventType.js';
 import {equivalent, get as getProjection} from '../proj.js';
 import ReprojTile from '../reproj/Tile.js';
@@ -52,6 +51,10 @@ import {getForProjection as getTileGridForProjection} from '../tilegrid.js';
  * @property {number} [transition] Duration of the opacity transition for rendering.
  * To disable the opacity transition, pass `transition: 0`.
  * @property {string} [key] Optional tile key for proper cache fetching
+ * @property {number} [zDirection=0] Indicate which resolution should be used
+ * by a renderer if the view resolution does not match any resolution of the tile source.
+ * If 0, the nearest resolution will be used. If 1, the nearest lower resolution
+ * will be used. If -1, the nearest higher resolution will be used.
  */
 
 
@@ -84,7 +87,8 @@ class TileImage extends UrlTile {
       wrapX: options.wrapX,
       transition: options.transition,
       key: options.key,
-      attributionsCollapsible: options.attributionsCollapsible
+      attributionsCollapsible: options.attributionsCollapsible,
+      zDirection: options.zDirection
     });
 
     /**
@@ -256,8 +260,7 @@ class TileImage extends UrlTile {
       this.tileLoadFunction,
       this.tileOptions);
     tile.key = key;
-    listen(tile, EventType.CHANGE,
-      this.handleTileChange, this);
+    tile.addEventListener(EventType.CHANGE, this.handleTileChange.bind(this));
     return tile;
   }
 

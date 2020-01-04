@@ -145,6 +145,13 @@ class Tile extends EventTarget {
   }
 
   /**
+   * @inheritDoc
+   */
+  disposeInternal() {
+    this.setState(TileState.ABORT);
+  }
+
+  /**
    * @return {string} Key.
    */
   getKey() {
@@ -241,6 +248,9 @@ class Tile extends EventTarget {
    * @api
    */
   setState(state) {
+    if (this.state !== TileState.ERROR && this.state > state) {
+      throw new Error('Tile load sequence violation');
+    }
     this.state = state;
     this.changed();
   }

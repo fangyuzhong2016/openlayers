@@ -1,13 +1,15 @@
 /**
  * @module ol/MapBrowserEventHandler
  */
-import {DEVICE_PIXEL_RATIO} from './has.js';
+
+import 'elm-pep';
+import {DEVICE_PIXEL_RATIO, PASSIVE_EVENT_LISTENERS} from './has.js';
 import MapBrowserEventType from './MapBrowserEventType.js';
 import MapBrowserPointerEvent from './MapBrowserPointerEvent.js';
 import {listen, unlistenByKey} from './events.js';
 import EventTarget from './events/Target.js';
 import PointerEventType from './pointer/EventType.js';
-import PointerEventHandler from './pointer/PointerEventHandler.js';
+import EventType from './events/EventType.js';
 
 class MapBrowserEventHandler extends EventTarget {
 
@@ -17,7 +19,7 @@ class MapBrowserEventHandler extends EventTarget {
    */
   constructor(map, moveTolerance) {
 
-    super();
+    super(map);
 
     /**
      * This is the element that we will listen to the real events on.
@@ -54,7 +56,7 @@ class MapBrowserEventHandler extends EventTarget {
     /**
      * The most recent "down" type event (or null if none have occurred).
      * Set on pointerdown.
-     * @type {import("./pointer/PointerEvent.js").default}
+     * @type {PointerEvent}
      * @private
      */
     this.down_ = null;
@@ -73,44 +75,41 @@ class MapBrowserEventHandler extends EventTarget {
      */
     this.trackedTouches_ = {};
 
-    /**
-     * Event handler which generates pointer events for
-     * the viewport element.
-     *
-     * @type {PointerEventHandler}
-     * @private
-     */
-    this.pointerEventHandler_ = new PointerEventHandler(element);
-
-    /**
-     * Event handler which generates pointer events for
-     * the document (used when dragging).
-     *
-     * @type {PointerEventHandler}
-     * @private
-     */
-    this.documentPointerEventHandler_ = null;
+    this.element_ = element;
 
     /**
      * @type {?import("./events.js").EventsKey}
      * @private
      */
-    this.pointerdownListenerKey_ = listen(this.pointerEventHandler_,
+    this.pointerdownListenerKey_ = listen(element,
       PointerEventType.POINTERDOWN,
       this.handlePointerDown_, this);
 
     /**
+     * @type {PointerEvent}
+     * @private
+     */
+    this.originalPointerMoveEvent_;
+
+    /**
      * @type {?import("./events.js").EventsKey}
      * @private
      */
-    this.relayedListenerKey_ = listen(this.pointerEventHandler_,
+    this.relayedListenerKey_ = listen(element,
       PointerEventType.POINTERMOVE,
       this.relayEvent_, this);
 
+    /**
+     * @private
+     */
+    this.boundHandleTouchMove_ = this.handleTouchMove_.bind(this);
+
+    this.element_.addEventListener(EventType.TOUCHMOVE, this.boundHandleTouchMove_,
+      PASSIVE_EVENT_LISTENERS ? {passive: false} : false);
   }
 
   /**
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @private
    */
@@ -139,7 +138,7 @@ class MapBrowserEventHandler extends EventTarget {
   /**
    * Keeps track on how many pointers are currently active.
    *
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @private
    */
@@ -156,7 +155,7 @@ class MapBrowserEventHandler extends EventTarget {
   }
 
   /**
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @private
    */
@@ -181,13 +180,11 @@ class MapBrowserEventHandler extends EventTarget {
       this.dragListenerKeys_.length = 0;
       this.dragging_ = false;
       this.down_ = null;
-      this.documentPointerEventHandler_.dispose();
-      this.documentPointerEventHandler_ = null;
     }
   }
 
   /**
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @return {boolean} If the left mouse button was pressed.
    * @private
@@ -197,7 +194,7 @@ class MapBrowserEventHandler extends EventTarget {
   }
 
   /**
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @private
    */
@@ -210,18 +207,11 @@ class MapBrowserEventHandler extends EventTarget {
     this.down_ = pointerEvent;
 
     if (this.dragListenerKeys_.length === 0) {
-      /* Set up a pointer event handler on the `document`,
-       * which is required when the pointer is moved outside
-       * the viewport when dragging.
-       */
-      this.documentPointerEventHandler_ =
-          new PointerEventHandler(document);
-
       this.dragListenerKeys_.push(
-        listen(this.documentPointerEventHandler_,
+        listen(document,
           MapBrowserEventType.POINTERMOVE,
           this.handlePointerMove_, this),
-        listen(this.documentPointerEventHandler_,
+        listen(document,
           MapBrowserEventType.POINTERUP,
           this.handlePointerUp_, this),
         /* Note that the listener for `pointercancel is set up on
@@ -237,7 +227,7 @@ class MapBrowserEventHandler extends EventTarget {
          * only receive a `touchcancel` from `pointerEventHandler_`, because it is
          * only registered there.
          */
-        listen(this.pointerEventHandler_,
+        listen(this.element_,
           MapBrowserEventType.POINTERCANCEL,
           this.handlePointerUp_, this)
       );
@@ -245,7 +235,7 @@ class MapBrowserEventHandler extends EventTarget {
   }
 
   /**
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @private
    */
@@ -260,29 +250,38 @@ class MapBrowserEventHandler extends EventTarget {
         this.dragging_);
       this.dispatchEvent(newEvent);
     }
-
-    // Some native android browser triggers mousemove events during small period
-    // of time. See: https://code.google.com/p/android/issues/detail?id=5491 or
-    // https://code.google.com/p/android/issues/detail?id=19827
-    // ex: Galaxy Tab P3110 + Android 4.1.1
-    pointerEvent.preventDefault();
   }
 
   /**
    * Wrap and relay a pointer event.  Note that this requires that the type
    * string for the MapBrowserPointerEvent matches the PointerEvent type.
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @private
    */
   relayEvent_(pointerEvent) {
+    this.originalPointerMoveEvent_ = pointerEvent;
     const dragging = !!(this.down_ && this.isMoving_(pointerEvent));
     this.dispatchEvent(new MapBrowserPointerEvent(
       pointerEvent.type, this.map_, pointerEvent, dragging));
   }
 
   /**
-   * @param {import("./pointer/PointerEvent.js").default} pointerEvent Pointer
+   * Flexible handling of a `touch-action: none` css equivalent: because calling
+   * `preventDefault()` on a `pointermove` event does not stop native page scrolling
+   * and zooming, we also listen for `touchmove` and call `preventDefault()` on it
+   * when an interaction (currently `DragPan` handles the event.
+   * @param {TouchEvent} event Event.
+   * @private
+   */
+  handleTouchMove_(event) {
+    if (this.originalPointerMoveEvent_.defaultPrevented) {
+      event.preventDefault();
+    }
+  }
+
+  /**
+   * @param {PointerEvent} pointerEvent Pointer
    * event.
    * @return {boolean} Is moving.
    * @private
@@ -301,6 +300,8 @@ class MapBrowserEventHandler extends EventTarget {
       unlistenByKey(this.relayedListenerKey_);
       this.relayedListenerKey_ = null;
     }
+    this.element_.removeEventListener(EventType.TOUCHMOVE, this.boundHandleTouchMove_);
+
     if (this.pointerdownListenerKey_) {
       unlistenByKey(this.pointerdownListenerKey_);
       this.pointerdownListenerKey_ = null;
@@ -309,14 +310,7 @@ class MapBrowserEventHandler extends EventTarget {
     this.dragListenerKeys_.forEach(unlistenByKey);
     this.dragListenerKeys_.length = 0;
 
-    if (this.documentPointerEventHandler_) {
-      this.documentPointerEventHandler_.dispose();
-      this.documentPointerEventHandler_ = null;
-    }
-    if (this.pointerEventHandler_) {
-      this.pointerEventHandler_.dispose();
-      this.pointerEventHandler_ = null;
-    }
+    this.element_ = null;
     super.disposeInternal();
   }
 }

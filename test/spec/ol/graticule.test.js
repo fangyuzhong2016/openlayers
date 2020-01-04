@@ -3,7 +3,7 @@ import Map from '../../../src/ol/Map.js';
 import {get as getProjection} from '../../../src/ol/proj.js';
 import Stroke from '../../../src/ol/style/Stroke.js';
 import Text from '../../../src/ol/style/Text.js';
-import Feature from '../../../src/ol/Feature';
+import Feature from '../../../src/ol/Feature.js';
 
 describe('ol.layer.Graticule', function() {
   let graticule;
@@ -32,6 +32,7 @@ describe('ol.layer.Graticule', function() {
     });
 
     it('creates a graticule with labels', function() {
+      const feature = new Feature();
       graticule = new Graticule({
         showLabels: true
       });
@@ -51,6 +52,10 @@ describe('ol.layer.Graticule', function() {
       expect(graticule.parallelsLabels_.length).to.be(3);
       expect(graticule.parallelsLabels_[0].text).to.be('0° 00′ 00″');
       expect(graticule.parallelsLabels_[0].geom.getCoordinates()[1]).to.roughlyEqual(0, 1e-9);
+      feature.set('graticule_label', graticule.meridiansLabels_[0].text);
+      expect(graticule.lonLabelStyle_(feature).getText().getText()).to.be('0° 00′ 00″');
+      feature.set('graticule_label', graticule.parallelsLabels_[0].text);
+      expect(graticule.latLabelStyle_(feature).getText().getText()).to.be('0° 00′ 00″');
     });
 
     it('has a default stroke style', function() {
@@ -105,6 +110,10 @@ describe('ol.layer.Graticule', function() {
       expect(graticule.parallelsLabels_[0].text).to.be('lat: 0');
       expect(graticule.lonLabelStyle_(feature).getText()).to.eql(lonLabelStyle);
       expect(graticule.latLabelStyle_(feature).getText()).to.eql(latLabelStyle);
+      feature.set('graticule_label', graticule.meridiansLabels_[0].text);
+      expect(graticule.lonLabelStyle_(feature).getText().getText()).to.be('lon: 0');
+      feature.set('graticule_label', graticule.parallelsLabels_[0].text);
+      expect(graticule.latLabelStyle_(feature).getText().getText()).to.be('lat: 0');
       expect(graticule.lonLabelPosition_).to.be(0.9);
       expect(graticule.latLabelPosition_).to.be(0.1);
     });

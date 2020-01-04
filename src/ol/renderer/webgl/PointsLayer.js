@@ -1,97 +1,57 @@
 /**
  * @module ol/renderer/webgl/PointsLayer
  */
-import LayerRenderer from '../Layer';
-import WebGLArrayBuffer from '../../webgl/Buffer';
-import {DYNAMIC_DRAW, ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, FLOAT} from '../../webgl';
-import WebGLHelper, {DefaultAttrib} from '../../webgl/Helper';
-import GeometryType from '../../geom/GeometryType';
-
-const VERTEX_SHADER = `
-  precision mediump float;
-  attribute vec2 a_position;
-  attribute vec2 a_texCoord;
-  attribute float a_rotateWithView;
-  attribute vec2 a_offsets;
-  attribute float a_opacity;
-  attribute vec4 a_color;
-  
-  uniform mat4 u_projectionMatrix;
-  uniform mat4 u_offsetScaleMatrix;
-  uniform mat4 u_offsetRotateMatrix;
-  
-  varying vec2 v_texCoord;
-  varying float v_opacity;
-  varying vec4 v_color;
-  
-  void main(void) {
-    mat4 offsetMatrix = u_offsetScaleMatrix;
-    if (a_rotateWithView == 1.0) {
-      offsetMatrix = u_offsetScaleMatrix * u_offsetRotateMatrix;
-    }
-    vec4 offsets = offsetMatrix * vec4(a_offsets, 0.0, 0.0);
-    gl_Position = u_projectionMatrix * vec4(a_position, 0.0, 1.0) + offsets;
-    v_texCoord = a_texCoord;
-    v_opacity = a_opacity;
-    v_color = a_color;
-  }`;
-
-const FRAGMENT_SHADER = `
-  precision mediump float;
-  
-  uniform sampler2D u_texture;
-
-  varying vec2 v_texCoord;
-  varying float v_opacity;
-  varying vec4 v_color;
-  
-  void main(void) {
-    if (v_opacity == 0.0) {
-      discard;
-    }
-    vec4 textureColor = texture2D(u_texture, v_texCoord);
-    gl_FragColor = v_color * textureColor;
-    gl_FragColor.a *= v_opacity;
-    gl_FragColor.rgb *= gl_FragColor.a;
-  }`;
+import WebGLArrayBuffer from '../../webgl/Buffer.js';
+import {ARRAY_BUFFER, DYNAMIC_DRAW, ELEMENT_ARRAY_BUFFER} from '../../webgl.js';
+import {AttributeType, DefaultUniform} from '../../webgl/Helper.js';
+import GeometryType from '../../geom/GeometryType.js';
+import WebGLLayerRenderer, {colorDecodeId, colorEncodeId, WebGLWorkerMessageType} from './Layer.js';
+import ViewHint from '../../ViewHint.js';
+import {buffer, createEmpty, equals} from '../../extent.js';
+import {
+  apply as applyTransform,
+  create as createTransform,
+  makeInverse as makeInverseTransform,
+  multiply as multiplyTransform
+} from '../../transform.js';
+import {create as createWebGLWorker} from '../../worker/webgl.js';
+import {getUid} from '../../util.js';
+import WebGLRenderTarget from '../../webgl/RenderTarget.js';
+import {assert} from '../../asserts.js';
+import BaseVector from '../../layer/BaseVector.js';
+import {listen, unlistenByKey} from '../../events.js';
+import VectorEventType from '../../source/VectorEventType.js';
 
 /**
- * @typedef {Object} PostProcessesOptions
- * @property {number} [scaleRatio] Scale ratio; if < 1, the post process will render to a texture smaller than
- * the main canvas that will then be sampled up (useful for saving resource on blur steps).
- * @property {string} [vertexShader] Vertex shader source
- * @property {string} [fragmentShader] Fragment shader source
- * @property {Object.<string,import("../../webgl/Helper").UniformValue>} [uniforms] Uniform definitions for the post process step
+ * @typedef {Object} CustomAttribute A description of a custom attribute to be passed on to the GPU, with a value different
+ * for each feature.
+ * @property {string} name Attribute name.
+ * @property {function(import("../../Feature").default, Object<string, *>):number} callback This callback computes the numerical value of the
+ * attribute for a given feature (properties are available as 2nd arg for quicker access).
+ */
+
+/**
+ * @typedef {Object} FeatureCacheItem Object that holds a reference to a feature, its geometry and properties. Used to optimize
+ * rebuildBuffers by accessing these objects quicker.
+ * @property {import("../../Feature").default} feature Feature
+ * @property {Object<string, *>} properties Feature properties
+ * @property {import("../../geom").Geometry} geometry Feature geometry
  */
 
 /**
  * @typedef {Object} Options
- * @property {function(import("../../Feature").default):number} [sizeCallback] Will be called on every feature in the
- * source to compute the size of the quad on screen (in pixels). This is only done on source change.
- * @property {function(import("../../Feature").default, number):number} [coordCallback] Will be called on every feature in the
- * source to compute the coordinate of the quad center on screen (in pixels). This is only done on source change.
- * The second argument is 0 for `x` component and 1 for `y`.
- * @property {function(import("../../Feature").default, number):number} [texCoordCallback] Will be called on every feature in the
- * source to compute the texture coordinates of each corner of the quad (without effect if no `texture` option defined). This is only done on source change.
- * The second argument is 0 for `u0` component, 1 for `v0`, 2 for `u1`, and 3 for `v1`.
- * @property {function(import("../../Feature").default, number, number):number} [colorCallback] Will be called on every feature in the
- * source to compute the color of each corner of the quad. This is only done on source change.
- * The second argument is 0 for bottom left, 1 for bottom right, 2 for top right and 3 for top left
- * The third argument is 0 for red, 1 for green, 2 for blue and 3 for alpha
- * The return value should be between 0 and 1.
- * @property {function(import("../../Feature").default):number} [opacityCallback] Will be called on every feature in the
- * source to compute the opacity of the quad on screen (from 0 to 1). This is only done on source change.
- * Note: this is multiplied with the color of the point which can also have an alpha value < 1.
- * @property {function(import("../../Feature").default):boolean} [rotateWithViewCallback] Will be called on every feature in the
- * source to compute whether the quad on screen must stay upwards (`false`) or follow the view rotation (`true`).
- * This is only done on source change.
- * @property {HTMLCanvasElement|HTMLImageElement|ImageData} [texture] Texture to use on points. `texCoordCallback` and `sizeCallback`
- * must be defined for this to have any effect.
- * @property {string} [vertexShader] Vertex shader source
- * @property {string} [fragmentShader] Fragment shader source
+ * @property {Array<CustomAttribute>} [attributes] These attributes will be read from the features in the source and then
+ * passed to the GPU. The `name` property of each attribute will serve as its identifier:
+ *  * In the vertex shader as an `attribute` by prefixing it with `a_`
+ *  * In the fragment shader as a `varying` by prefixing it with `v_`
+ * Please note that these can only be numerical values.
+ * @property {string} vertexShader Vertex shader source, mandatory.
+ * @property {string} fragmentShader Fragment shader source, mandatory.
+ * @property {string} [hitVertexShader] Vertex shader source for hit detection rendering.
+ * @property {string} [hitFragmentShader] Fragment shader source for hit detection rendering.
  * @property {Object.<string,import("../../webgl/Helper").UniformValue>} [uniforms] Uniform definitions for the post process steps
  * Please note that `u_texture` is reserved for the main texture slot.
- * @property {Array<PostProcessesOptions>} [postProcesses] Post-processes definitions
+ * @property {Array<import("./Layer").PostProcessesOptions>} [postProcesses] Post-processes definitions
  */
 
 /**
@@ -100,13 +60,38 @@ const FRAGMENT_SHADER = `
  * All features will be rendered as quads (two triangles forming a square). New data will be flushed to the GPU
  * every time the vector source changes.
  *
- * Use shaders to customize the final output. The following attributes are available:
- * * `vec2 a_position`
- * * `vec2 a_texCoord`
- * * `vec2 a_offsets`
- * * `float a_rotateWithView`
- * * `float a_opacity`
- * * `float a_color`
+ * You need to provide vertex and fragment shaders for rendering. This can be done using
+ * {@link module:ol/webgl/ShaderBuilder} utilities. These shaders shall expect a `a_position` attribute
+ * containing the screen-space projected center of the quad, as well as a `a_index` attribute
+ * whose value (0, 1, 2 or 3) indicates which quad vertex is currently getting processed (see structure below).
+ *
+ * To include variable attributes in the shaders, you need to declare them using the `attributes` property of
+ * the options object like so:
+ * ```js
+ * new WebGLPointsLayerRenderer(layer, {
+ *   attributes: [
+ *     {
+ *       name: 'size',
+ *       callback: function(feature) {
+ *         // compute something with the feature
+ *       }
+ *     },
+ *     {
+ *       name: 'weight',
+ *       callback: function(feature) {
+ *         // compute something with the feature
+ *       }
+ *     },
+ *   ],
+ *   vertexShader:
+ *     // shader using attribute a_weight and a_size
+ *   fragmentShader:
+ *     // shader using varying v_weight and v_size
+ * ```
+ *
+ * To enable hit detection, you must as well provide dedicated shaders using the `hitVertexShader`
+ * and `hitFragmentShader` properties. These shall expect the `a_hitColor` attribute to contain
+ * the final color that will have to be output for hit detection to work.
  *
  * The following uniform is used for the main texture: `u_texture`.
  *
@@ -114,6 +99,7 @@ const FRAGMENT_SHADER = `
  *
  * Points are rendered as quads with the following structure:
  *
+ * ```
  *   (u0, v1)      (u1, v1)
  *  [3]----------[2]
  *   |`           |
@@ -124,135 +110,253 @@ const FRAGMENT_SHADER = `
  *   |          ` |
  *  [0]----------[1]
  *   (u0, v0)      (u1, v0)
+ *  ```
  *
  * This uses {@link module:ol/webgl/Helper~WebGLHelper} internally.
  *
- * Default shaders are shown hereafter:
- *
- * * Vertex shader:
- *   ```
- *   precision mediump float;
- *
- *   attribute vec2 a_position;
- *   attribute vec2 a_texCoord;
- *   attribute float a_rotateWithView;
- *   attribute vec2 a_offsets;
- *   attribute float a_opacity;
- *   attribute vec4 a_color;
- *
- *   uniform mat4 u_projectionMatrix;
- *   uniform mat4 u_offsetScaleMatrix;
- *   uniform mat4 u_offsetRotateMatrix;
- *
- *   varying vec2 v_texCoord;
- *   varying float v_opacity;
- *   varying vec4 v_color;
- *
- *   void main(void) {
- *     mat4 offsetMatrix = u_offsetScaleMatrix;
- *     if (a_rotateWithView == 1.0) {
- *       offsetMatrix = u_offsetScaleMatrix * u_offsetRotateMatrix;
- *     }
- *     vec4 offsets = offsetMatrix * vec4(a_offsets, 0.0, 0.0);
- *     gl_Position = u_projectionMatrix * vec4(a_position, 0.0, 1.0) + offsets;
- *     v_texCoord = a_texCoord;
- *     v_opacity = a_opacity;
- *     v_color = a_color;
- *   }
- *   ```
- *
- * * Fragment shader:
- *   ```
- *   precision mediump float;
- *
- *   uniform sampler2D u_texture;
- *
- *   varying vec2 v_texCoord;
- *   varying float v_opacity;
- *   varying vec4 v_color;
- *
- *   void main(void) {
- *     if (v_opacity == 0.0) {
- *       discard;
- *     }
- *     vec4 textureColor = texture2D(u_texture, v_texCoord);
- *     gl_FragColor = v_color * textureColor;
- *     gl_FragColor.a *= v_opacity;
- *     gl_FragColor.rgb *= gl_FragColor.a;
- *   }
- *   ```
- *
  * @api
  */
-class WebGLPointsLayerRenderer extends LayerRenderer {
+class WebGLPointsLayerRenderer extends WebGLLayerRenderer {
 
   /**
-   * @param {import("../../layer/Vector.js").default} vectorLayer Vector layer.
-   * @param {Options=} [opt_options] Options.
+   * @param {import("../../layer/Layer.js").default} layer Layer.
+   * @param {Options} options Options.
    */
-  constructor(vectorLayer, opt_options) {
-    super(vectorLayer);
-
-    const options = opt_options || {};
-
+  constructor(layer, options) {
     const uniforms = options.uniforms || {};
-    uniforms.u_texture = options.texture || this.getDefaultTexture();
-    this.helper_ = new WebGLHelper({
-      postProcesses: options.postProcesses,
-      uniforms: uniforms
+    const projectionMatrixTransform = createTransform();
+    uniforms[DefaultUniform.PROJECTION_MATRIX] = projectionMatrixTransform;
+
+    super(layer, {
+      uniforms: uniforms,
+      postProcesses: options.postProcesses
     });
 
     this.sourceRevision_ = -1;
 
-    this.verticesBuffer_ = new WebGLArrayBuffer([], DYNAMIC_DRAW);
-    this.indicesBuffer_ = new WebGLArrayBuffer([], DYNAMIC_DRAW);
+    this.verticesBuffer_ = new WebGLArrayBuffer(ARRAY_BUFFER, DYNAMIC_DRAW);
+    this.hitVerticesBuffer_ = new WebGLArrayBuffer(ARRAY_BUFFER, DYNAMIC_DRAW);
+    this.indicesBuffer_ = new WebGLArrayBuffer(ELEMENT_ARRAY_BUFFER, DYNAMIC_DRAW);
 
-    this.program_ = this.helper_.getProgram(
-      options.fragmentShader || FRAGMENT_SHADER,
-      options.vertexShader || VERTEX_SHADER
+    this.program_ = this.helper.getProgram(
+      options.fragmentShader,
+      options.vertexShader
     );
 
-    this.helper_.useProgram(this.program_);
+    /**
+     * @type {boolean}
+     * @private
+     */
+    this.hitDetectionEnabled_ = options.hitFragmentShader && options.hitVertexShader ? true : false;
 
-    this.sizeCallback_ = options.sizeCallback || function() {
-      return 1;
+    this.hitProgram_ = this.hitDetectionEnabled_ && this.helper.getProgram(
+      options.hitFragmentShader,
+      options.hitVertexShader
+    );
+
+    const customAttributes = options.attributes ?
+      options.attributes.map(function(attribute) {
+        return {
+          name: 'a_' + attribute.name,
+          size: 1,
+          type: AttributeType.FLOAT
+        };
+      }) : [];
+
+    /**
+     * A list of attributes used by the renderer. By default only the position and
+     * index of the vertex (0 to 3) are required.
+     * @type {Array<import('../../webgl/Helper.js').AttributeDescription>}
+     */
+    this.attributes = [{
+      name: 'a_position',
+      size: 2,
+      type: AttributeType.FLOAT
+    }, {
+      name: 'a_index',
+      size: 1,
+      type: AttributeType.FLOAT
+    }].concat(customAttributes);
+
+    /**
+     * A list of attributes used for hit detection.
+     * @type {Array<import('../../webgl/Helper.js').AttributeDescription>}
+     */
+    this.hitDetectionAttributes = [{
+      name: 'a_position',
+      size: 2,
+      type: AttributeType.FLOAT
+    }, {
+      name: 'a_index',
+      size: 1,
+      type: AttributeType.FLOAT
+    }, {
+      name: 'a_hitColor',
+      size: 4,
+      type: AttributeType.FLOAT
+    }, {
+      name: 'a_featureUid',
+      size: 1,
+      type: AttributeType.FLOAT
+    }].concat(customAttributes);
+
+    this.customAttributes = options.attributes ? options.attributes : [];
+
+    this.previousExtent_ = createEmpty();
+
+    /**
+     * This transform is updated on every frame and is the composition of:
+     * - invert of the world->screen transform that was used when rebuilding buffers (see `this.renderTransform_`)
+     * - current world->screen transform
+     * @type {import("../../transform.js").Transform}
+     * @private
+     */
+    this.currentTransform_ = projectionMatrixTransform;
+
+    /**
+     * This transform is updated when buffers are rebuilt and converts world space coordinates to screen space
+     * @type {import("../../transform.js").Transform}
+     * @private
+     */
+    this.renderTransform_ = createTransform();
+
+    /**
+     * @type {import("../../transform.js").Transform}
+     * @private
+     */
+    this.invertRenderTransform_ = createTransform();
+
+    /**
+     * @type {Float32Array}
+     * @private
+     */
+    this.renderInstructions_ = new Float32Array(0);
+
+    /**
+     * These instructions are used for hit detection
+     * @type {Float32Array}
+     * @private
+     */
+    this.hitRenderInstructions_ = new Float32Array(0);
+
+    /**
+     * @type {WebGLRenderTarget}
+     * @private
+     */
+    this.hitRenderTarget_ = this.hitDetectionEnabled_ && new WebGLRenderTarget(this.helper);
+
+    this.worker_ = createWebGLWorker();
+    this.worker_.addEventListener('message', function(event) {
+      const received = event.data;
+      if (received.type === WebGLWorkerMessageType.GENERATE_BUFFERS) {
+        const projectionTransform = received.projectionTransform;
+        if (received.hitDetection) {
+          this.hitVerticesBuffer_.fromArrayBuffer(received.vertexBuffer);
+          this.helper.flushBufferData(this.hitVerticesBuffer_);
+        } else {
+          this.verticesBuffer_.fromArrayBuffer(received.vertexBuffer);
+          this.helper.flushBufferData(this.verticesBuffer_);
+        }
+        this.indicesBuffer_.fromArrayBuffer(received.indexBuffer);
+        this.helper.flushBufferData(this.indicesBuffer_);
+
+        this.renderTransform_ = projectionTransform;
+        makeInverseTransform(this.invertRenderTransform_, this.renderTransform_);
+        if (received.hitDetection) {
+          this.hitRenderInstructions_ = new Float32Array(event.data.renderInstructions);
+        } else {
+          this.renderInstructions_ = new Float32Array(event.data.renderInstructions);
+        }
+
+        this.getLayer().changed();
+      }
+    }.bind(this));
+
+    /**
+     * This object will be updated when the source changes. Key is uid.
+     * @type {Object<string, FeatureCacheItem>}
+     * @private
+     */
+    this.featureCache_ = {};
+
+    /**
+     * Amount of features in the cache.
+     * @type {number}
+     * @private
+     */
+    this.featureCount_ = 0;
+
+    const source = this.getLayer().getSource();
+    this.sourceListenKeys_ = [
+      listen(source, VectorEventType.ADDFEATURE, this.handleSourceFeatureAdded_, this),
+      listen(source, VectorEventType.CHANGEFEATURE, this.handleSourceFeatureChanged_, this),
+      listen(source, VectorEventType.REMOVEFEATURE, this.handleSourceFeatureDelete_, this)
+    ];
+    source.forEachFeature(function(feature) {
+      this.featureCache_[getUid(feature)] = {
+        feature: feature,
+        properties: feature.getProperties(),
+        geometry: feature.getGeometry()
+      };
+      this.featureCount_++;
+    }.bind(this));
+  }
+
+  /**
+   * @param {import("../../source/Vector.js").VectorSourceEvent} event Event.
+   * @private
+   */
+  handleSourceFeatureAdded_(event) {
+    const feature = event.feature;
+    this.featureCache_[getUid(feature)] = {
+      feature: feature,
+      properties: feature.getProperties(),
+      geometry: feature.getGeometry()
     };
-    this.coordCallback_ = options.coordCallback || function(feature, index) {
-      const geom = /** @type {import("../../geom/Point").default} */ (feature.getGeometry());
-      return geom.getCoordinates()[index];
+    this.featureCount_++;
+  }
+
+  /**
+   * @param {import("../../source/Vector.js").VectorSourceEvent} event Event.
+   * @private
+   */
+  handleSourceFeatureChanged_(event) {
+    const feature = event.feature;
+    this.featureCache_[getUid(feature)] = {
+      feature: feature,
+      properties: feature.getProperties(),
+      geometry: feature.getGeometry()
     };
-    this.opacityCallback_ = options.opacityCallback || function() {
-      return 1;
-    };
-    this.texCoordCallback_ = options.texCoordCallback || function(feature, index) {
-      return index < 2 ? 0 : 1;
-    };
-    this.colorCallback_ = options.colorCallback || function(feature, index, component) {
-      return 1;
-    };
-    this.rotateWithViewCallback_ = options.rotateWithViewCallback || function() {
-      return false;
-    };
+  }
+
+  /**
+   * @param {import("../../source/Vector.js").VectorSourceEvent} event Event.
+   * @private
+   */
+  handleSourceFeatureDelete_(event) {
+    const feature = event.feature;
+    delete this.featureCache_[getUid(feature)];
+    this.featureCount_--;
   }
 
   /**
    * @inheritDoc
    */
-  disposeInternal() {
-    super.disposeInternal();
-  }
+  renderFrame(frameState) {
+    const renderCount = this.indicesBuffer_.getSize();
+    this.helper.drawElements(0, renderCount);
+    this.helper.finalizeDraw(frameState);
+    const canvas = this.helper.getCanvas();
 
-  /**
-   * @inheritDoc
-   */
-  renderFrame(frameState, layerState) {
-    this.helper_.drawElements(0, this.indicesBuffer_.getArray().length);
-    this.helper_.finalizeDraw(frameState);
-    const canvas = this.helper_.getCanvas();
-
+    const layerState = frameState.layerStatesArray[frameState.layerIndex];
     const opacity = layerState.opacity;
     if (opacity !== parseFloat(canvas.style.opacity)) {
       canvas.style.opacity = opacity;
+    }
+
+    if (this.hitDetectionEnabled_) {
+      this.renderHitDetection(frameState);
+      this.hitRenderTarget_.clearCachedData();
     }
 
     return canvas;
@@ -262,105 +366,208 @@ class WebGLPointsLayerRenderer extends LayerRenderer {
    * @inheritDoc
    */
   prepareFrame(frameState) {
-    const vectorLayer = /** @type {import("../../layer/Vector.js").default} */ (this.getLayer());
-    const vectorSource = vectorLayer.getSource();
+    const layer = this.getLayer();
+    const vectorSource = layer.getSource();
+    const viewState = frameState.viewState;
+    const viewNotMoving = !frameState.viewHints[ViewHint.ANIMATING] && !frameState.viewHints[ViewHint.INTERACTING];
+    const extentChanged = !equals(this.previousExtent_, frameState.extent);
+    const sourceChanged = this.sourceRevision_ < vectorSource.getRevision();
 
-    const stride = 12;
-
-    this.helper_.prepareDraw(frameState);
-
-    if (this.sourceRevision_ < vectorSource.getRevision()) {
+    if (sourceChanged) {
       this.sourceRevision_ = vectorSource.getRevision();
-      this.verticesBuffer_.getArray().length = 0;
-      this.indicesBuffer_.getArray().length = 0;
+    }
 
-      const viewState = frameState.viewState;
+    if (viewNotMoving && (extentChanged || sourceChanged)) {
       const projection = viewState.projection;
       const resolution = viewState.resolution;
 
-      // loop on features to fill the buffer
-      vectorSource.loadFeatures([-Infinity, -Infinity, Infinity, Infinity], resolution, projection);
-      vectorSource.forEachFeature((feature) => {
-        if (!feature.getGeometry() || feature.getGeometry().getType() !== GeometryType.POINT) {
-          return;
-        }
-        const x = this.coordCallback_(feature, 0);
-        const y = this.coordCallback_(feature, 1);
-        const u0 = this.texCoordCallback_(feature, 0);
-        const v0 = this.texCoordCallback_(feature, 1);
-        const u1 = this.texCoordCallback_(feature, 2);
-        const v1 = this.texCoordCallback_(feature, 3);
-        const size = this.sizeCallback_(feature);
-        const opacity = this.opacityCallback_(feature);
-        const rotateWithView = this.rotateWithViewCallback_(feature) ? 1 : 0;
-        const v0_r = this.colorCallback_(feature, 0, 0);
-        const v0_g = this.colorCallback_(feature, 0, 1);
-        const v0_b = this.colorCallback_(feature, 0, 2);
-        const v0_a = this.colorCallback_(feature, 0, 3);
-        const v1_r = this.colorCallback_(feature, 1, 0);
-        const v1_g = this.colorCallback_(feature, 1, 1);
-        const v1_b = this.colorCallback_(feature, 1, 2);
-        const v1_a = this.colorCallback_(feature, 1, 3);
-        const v2_r = this.colorCallback_(feature, 2, 0);
-        const v2_g = this.colorCallback_(feature, 2, 1);
-        const v2_b = this.colorCallback_(feature, 2, 2);
-        const v2_a = this.colorCallback_(feature, 2, 3);
-        const v3_r = this.colorCallback_(feature, 3, 0);
-        const v3_g = this.colorCallback_(feature, 3, 1);
-        const v3_b = this.colorCallback_(feature, 3, 2);
-        const v3_a = this.colorCallback_(feature, 3, 3);
-        const baseIndex = this.verticesBuffer_.getArray().length / stride;
+      const renderBuffer = layer instanceof BaseVector ? layer.getRenderBuffer() : 0;
+      const extent = buffer(frameState.extent, renderBuffer * resolution);
+      vectorSource.loadFeatures(extent, resolution, projection);
 
-        this.verticesBuffer_.getArray().push(
-          x, y, -size / 2, -size / 2, u0, v0, opacity, rotateWithView, v0_r, v0_g, v0_b, v0_a,
-          x, y, +size / 2, -size / 2, u1, v0, opacity, rotateWithView, v1_r, v1_g, v1_b, v1_a,
-          x, y, +size / 2, +size / 2, u1, v1, opacity, rotateWithView, v2_r, v2_g, v2_b, v2_a,
-          x, y, -size / 2, +size / 2, u0, v1, opacity, rotateWithView, v3_r, v3_g, v3_b, v3_a
-        );
-        this.indicesBuffer_.getArray().push(
-          baseIndex, baseIndex + 1, baseIndex + 3,
-          baseIndex + 1, baseIndex + 2, baseIndex + 3
-        );
-      });
-
-      this.helper_.flushBufferData(ARRAY_BUFFER, this.verticesBuffer_);
-      this.helper_.flushBufferData(ELEMENT_ARRAY_BUFFER, this.indicesBuffer_);
+      this.rebuildBuffers_(frameState);
+      this.previousExtent_ = frameState.extent.slice();
     }
 
-    // write new data
-    this.helper_.bindBuffer(ARRAY_BUFFER, this.verticesBuffer_);
-    this.helper_.bindBuffer(ELEMENT_ARRAY_BUFFER, this.indicesBuffer_);
+    // apply the current projection transform with the invert of the one used to fill buffers
+    this.helper.makeProjectionTransform(frameState, this.currentTransform_);
+    multiplyTransform(this.currentTransform_, this.invertRenderTransform_);
 
-    const bytesPerFloat = Float32Array.BYTES_PER_ELEMENT;
-    this.helper_.enableAttributeArray(DefaultAttrib.POSITION, 2, FLOAT, bytesPerFloat * stride, 0);
-    this.helper_.enableAttributeArray(DefaultAttrib.OFFSETS, 2, FLOAT, bytesPerFloat * stride, bytesPerFloat * 2);
-    this.helper_.enableAttributeArray(DefaultAttrib.TEX_COORD, 2, FLOAT, bytesPerFloat * stride, bytesPerFloat * 4);
-    this.helper_.enableAttributeArray(DefaultAttrib.OPACITY, 1, FLOAT, bytesPerFloat * stride, bytesPerFloat * 6);
-    this.helper_.enableAttributeArray(DefaultAttrib.ROTATE_WITH_VIEW, 1, FLOAT, bytesPerFloat * stride, bytesPerFloat * 7);
-    this.helper_.enableAttributeArray(DefaultAttrib.COLOR, 4, FLOAT, bytesPerFloat * stride, bytesPerFloat * 8);
+    this.helper.useProgram(this.program_);
+    this.helper.prepareDraw(frameState);
+
+    // write new data
+    this.helper.bindBuffer(this.verticesBuffer_);
+    this.helper.bindBuffer(this.indicesBuffer_);
+
+    this.helper.enableAttributes(this.attributes);
 
     return true;
   }
 
   /**
-   * Will return the last shader compilation errors. If no error happened, will return null;
-   * @return {string|null} Errors, or null if last compilation was successful
-   * @api
+   * Rebuild internal webgl buffers based on current view extent; costly, should not be called too much
+   * @param {import("../../PluggableMap").FrameState} frameState Frame state.
+   * @private
    */
-  getShaderCompileErrors() {
-    return this.helper_.getShaderCompileErrors();
+  rebuildBuffers_(frameState) {
+    // saves the projection transform for the current frame state
+    const projectionTransform = createTransform();
+    this.helper.makeProjectionTransform(frameState, projectionTransform);
+
+    // here we anticipate the amount of render instructions that we well generate
+    // this can be done since we know that for normal render we only have x, y as base instructions,
+    // and x, y, r, g, b, a and featureUid for hit render instructions
+    // and we also know the amount of custom attributes to append to these
+    const totalInstructionsCount = (2 + this.customAttributes.length) * this.featureCount_;
+    if (!this.renderInstructions_ || this.renderInstructions_.length !== totalInstructionsCount) {
+      this.renderInstructions_ = new Float32Array(totalInstructionsCount);
+    }
+    if (this.hitDetectionEnabled_) {
+      const totalHitInstructionsCount = (7 + this.customAttributes.length) * this.featureCount_;
+      if (!this.hitRenderInstructions_ || this.hitRenderInstructions_.length !== totalHitInstructionsCount) {
+        this.hitRenderInstructions_ = new Float32Array(totalHitInstructionsCount);
+      }
+    }
+
+    // loop on features to fill the buffer
+    let featureCache, geometry;
+    const tmpCoords = [];
+    const tmpColor = [];
+    let renderIndex = 0;
+    let hitIndex = 0;
+    let hitColor;
+    for (const featureUid in this.featureCache_) {
+      featureCache = this.featureCache_[featureUid];
+      geometry = /** @type {import("../../geom").Point} */(featureCache.geometry);
+      if (!geometry || geometry.getType() !== GeometryType.POINT) {
+        continue;
+      }
+
+      tmpCoords[0] = geometry.getFlatCoordinates()[0];
+      tmpCoords[1] = geometry.getFlatCoordinates()[1];
+      applyTransform(projectionTransform, tmpCoords);
+
+      hitColor = colorEncodeId(hitIndex + 6, tmpColor);
+
+      this.renderInstructions_[renderIndex++] = tmpCoords[0];
+      this.renderInstructions_[renderIndex++] = tmpCoords[1];
+
+      // for hit detection, the feature uid is saved in the opacity value
+      // and the index of the opacity value is encoded in the color values
+      if (this.hitDetectionEnabled_) {
+        this.hitRenderInstructions_[hitIndex++] = tmpCoords[0];
+        this.hitRenderInstructions_[hitIndex++] = tmpCoords[1];
+        this.hitRenderInstructions_[hitIndex++] = hitColor[0];
+        this.hitRenderInstructions_[hitIndex++] = hitColor[1];
+        this.hitRenderInstructions_[hitIndex++] = hitColor[2];
+        this.hitRenderInstructions_[hitIndex++] = hitColor[3];
+        this.hitRenderInstructions_[hitIndex++] = Number(featureUid);
+      }
+
+      // pushing custom attributes
+      let value;
+      for (let j = 0; j < this.customAttributes.length; j++) {
+        value = this.customAttributes[j].callback(featureCache.feature, featureCache.properties);
+        this.renderInstructions_[renderIndex++] = value;
+        if (this.hitDetectionEnabled_) {
+          this.hitRenderInstructions_[hitIndex++] = value;
+        }
+      }
+    }
+
+    /** @type {import('./Layer').WebGLWorkerGenerateBuffersMessage} */
+    const message = {
+      type: WebGLWorkerMessageType.GENERATE_BUFFERS,
+      renderInstructions: this.renderInstructions_.buffer,
+      customAttributesCount: this.customAttributes.length
+    };
+    // additional properties will be sent back as-is by the worker
+    message['projectionTransform'] = projectionTransform;
+    this.worker_.postMessage(message, [this.renderInstructions_.buffer]);
+    this.renderInstructions_ = null;
+
+    /** @type {import('./Layer').WebGLWorkerGenerateBuffersMessage} */
+    if (this.hitDetectionEnabled_) {
+      const hitMessage = {
+        type: WebGLWorkerMessageType.GENERATE_BUFFERS,
+        renderInstructions: this.hitRenderInstructions_.buffer,
+        customAttributesCount: 5 + this.customAttributes.length
+      };
+      hitMessage['projectionTransform'] = projectionTransform;
+      hitMessage['hitDetection'] = true;
+      this.worker_.postMessage(hitMessage, [this.hitRenderInstructions_.buffer]);
+      this.hitRenderInstructions_ = null;
+    }
   }
 
   /**
-   * Returns a texture of 1x1 pixel, white
-   * @private
-   * @return {ImageData} Image data.
+   * @inheritDoc
    */
-  getDefaultTexture() {
-    const canvas = document.createElement('canvas');
-    const image = canvas.getContext('2d').createImageData(1, 1);
-    image.data[0] = image.data[1] = image.data[2] = image.data[3] = 255;
-    return image;
+  forEachFeatureAtCoordinate(coordinate, frameState, hitTolerance, callback, declutteredFeatures) {
+    assert(this.hitDetectionEnabled_, 66);
+    if (!this.hitRenderInstructions_) {
+      return;
+    }
+
+    const pixel = applyTransform(frameState.coordinateToPixelTransform, coordinate.slice());
+
+    const data = this.hitRenderTarget_.readPixel(pixel[0] / 2, pixel[1] / 2);
+    const color = [
+      data[0] / 255,
+      data[1] / 255,
+      data[2] / 255,
+      data[3] / 255
+    ];
+    const index = colorDecodeId(color);
+    const opacity = this.hitRenderInstructions_[index];
+    const uid = Math.floor(opacity).toString();
+
+    const source = this.getLayer().getSource();
+    const feature = source.getFeatureByUid(uid);
+    if (feature) {
+      return callback(feature, this.getLayer());
+    }
+  }
+
+  /**
+   * Render the hit detection data to the corresponding render target
+   * @param {import("../../PluggableMap.js").FrameState} frameState current frame state
+   */
+  renderHitDetection(frameState) {
+    // skip render entirely if vertex buffers not ready/generated yet
+    if (!this.hitVerticesBuffer_.getSize()) {
+      return;
+    }
+
+    this.hitRenderTarget_.setSize([
+      Math.floor(frameState.size[0] / 2),
+      Math.floor(frameState.size[1] / 2)
+    ]);
+
+    this.helper.useProgram(this.hitProgram_);
+    this.helper.prepareDrawToRenderTarget(frameState, this.hitRenderTarget_, true);
+
+    this.helper.bindBuffer(this.hitVerticesBuffer_);
+    this.helper.bindBuffer(this.indicesBuffer_);
+
+    this.helper.enableAttributes(this.hitDetectionAttributes);
+
+    const renderCount = this.indicesBuffer_.getSize();
+    this.helper.drawElements(0, renderCount);
+  }
+
+  /**
+   * @inheritDoc
+   */
+  disposeInternal() {
+    this.worker_.terminate();
+    this.layer_ = null;
+    this.sourceListenKeys_.forEach(function(key) {
+      unlistenByKey(key);
+    });
+    this.sourceListenKeys_ = null;
+    super.disposeInternal();
   }
 }
 

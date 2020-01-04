@@ -1,14 +1,12 @@
 /**
  * @module ol/render/canvas/Executor
  */
-import {getUid} from '../../util.js';
 import {equals} from '../../array.js';
 import {createEmpty, createOrUpdate,
   createOrUpdateEmpty, extend, intersects} from '../../extent.js';
 import {lineStringLength} from '../../geom/flat/length.js';
 import {drawTextOnPath} from '../../geom/flat/textpath.js';
 import {transform2D} from '../../geom/flat/transform.js';
-import {isEmpty} from '../../obj.js';
 import {drawImage, defaultPadding, defaultTextBaseline} from '../canvas.js';
 import CanvasInstruction from './Instruction.js';
 import {TEXT_ALIGN} from './TextBuilder.js';
@@ -21,6 +19,7 @@ import {
 import {createCanvasContext2D} from '../../dom.js';
 import {labelCache, defaultTextAlign, measureTextHeight, measureAndCacheTextWidth, measureTextWidths} from '../canvas.js';
 import Disposable from '../../Disposable.js';
+import RBush from 'rbush/rbush.js';
 
 
 /**
@@ -58,15 +57,10 @@ class Executor extends Disposable {
    * @param {number} resolution Resolution.
    * @param {number} pixelRatio Pixel ratio.
    * @param {boolean} overlaps The replay can have overlapping geometries.
-   * @param {?} declutterTree Declutter tree.
    * @param {SerializableInstructions} instructions The serializable instructions
    */
-  constructor(resolution, pixelRatio, overlaps, declutterTree, instructions) {
+  constructor(resolution, pixelRatio, overlaps, instructions) {
     super();
-    /**
-     * @type {?}
-     */
-    this.declutterTree = declutterTree;
 
     /**
      * @protected
@@ -92,6 +86,11 @@ class Executor extends Disposable {
      * @type {boolean}
      */
     this.alignFill_;
+
+    /**
+     * @type {Array<*>}
+     */
+    this.declutterItems = [];
 
     /**
      * @protected
@@ -192,9 +191,10 @@ class Executor extends Disposable {
       const width = measureTextWidths(textState.font, lines, widths);
       const lineHeight = measureTextHeight(textState.font);
       const height = lineHeight * numLines;
-      const renderWidth = (width + strokeWidth);
+      const renderWidth = width + strokeWidth;
       const context = createCanvasContext2D(
-        Math.ceil(renderWidth * scale),
+        // make canvas 2 pixels wider to account for italic text width measurement errors
+        Math.ceil((renderWidth + 2) * scale),
         Math.ceil((height + strokeWidth) * scale));
       label = context.canvas;
       labelCache.set(key, label);
@@ -205,8 +205,8 @@ class Executor extends Disposable {
       if (strokeKey) {
         context.strokeStyle = strokeState.strokeStyle;
         context.lineWidth = strokeWidth;
-        context.lineCap = /** @type {CanvasLineCap} */ (strokeState.lineCap);
-        context.lineJoin = /** @type {CanvasLineJoin} */ (strokeState.lineJoin);
+        context.lineCap = strokeState.lineCap;
+        context.lineJoin = strokeState.lineJoin;
         context.miterLimit = strokeState.miterLimit;
         if (context.setLineDash && strokeState.lineDash.length) {
           context.setLineDash(strokeState.lineDash);
@@ -219,7 +219,7 @@ class Executor extends Disposable {
       context.textBaseline = 'middle';
       context.textAlign = 'center';
       const leftRight = (0.5 - align);
-      const x = align * label.width / scale + leftRight * strokeWidth;
+      const x = align * renderWidth + leftRight * strokeWidth;
       let i;
       if (strokeKey) {
         for (i = 0; i < numLines; ++i) {
@@ -315,10 +315,14 @@ class Executor extends Disposable {
     const boxY = y - padding[0];
 
     if (fillStroke || rotation !== 0) {
-      p1[0] = p4[0] = boxX;
-      p1[1] = p2[1] = boxY;
-      p2[0] = p3[0] = boxX + boxW;
-      p3[1] = p4[1] = boxY + boxH;
+      p1[0] = boxX;
+      p4[0] = boxX;
+      p1[1] = boxY;
+      p2[1] = boxY;
+      p2[0] = boxX + boxW;
+      p3[0] = p2[0];
+      p3[1] = boxY + boxH;
+      p4[1] = p3[1];
     }
 
     let transform = null;
@@ -360,10 +364,12 @@ class Executor extends Disposable {
       const declutterArgs = intersects ?
         [context, transform ? transform.slice(0) : null, opacity, image, originX, originY, w, h, x, y, scale] :
         null;
-      if (declutterArgs && fillStroke) {
-        declutterArgs.push(fillInstruction, strokeInstruction, p1, p2, p3, p4);
+      if (declutterArgs) {
+        if (fillStroke) {
+          declutterArgs.push(fillInstruction, strokeInstruction, p1, p2, p3, p4);
+        }
+        declutterGroup.push(declutterArgs);
       }
-      declutterGroup.push(declutterArgs);
     } else if (intersects) {
       if (fillStroke) {
         this.replayTextBackground_(context, p1, p2, p3, p4,
@@ -412,8 +418,11 @@ class Executor extends Disposable {
   /**
    * @param {import("../canvas.js").DeclutterGroup} declutterGroup Declutter group.
    * @param {import("../../Feature.js").FeatureLike} feature Feature.
+   * @param {number} opacity Layer opacity.
+   * @param {?} declutterTree Declutter tree.
+   * @return {?} Declutter tree.
    */
-  renderDeclutter_(declutterGroup, feature) {
+  renderDeclutter(declutterGroup, feature, opacity, declutterTree) {
     if (declutterGroup && declutterGroup.length > 5) {
       const groupCount = declutterGroup[4];
       if (groupCount == 1 || groupCount == declutterGroup.length - 5) {
@@ -425,17 +434,26 @@ class Executor extends Disposable {
           maxY: /** @type {number} */ (declutterGroup[3]),
           value: feature
         };
-        if (!this.declutterTree.collides(box)) {
-          this.declutterTree.insert(box);
+        if (!declutterTree) {
+          declutterTree = new RBush(9);
+        }
+        if (!declutterTree.collides(box)) {
+          declutterTree.insert(box);
           for (let j = 5, jj = declutterGroup.length; j < jj; ++j) {
             const declutterData = /** @type {Array} */ (declutterGroup[j]);
-            if (declutterData) {
-              if (declutterData.length > 11) {
-                this.replayTextBackground_(declutterData[0],
-                  declutterData[13], declutterData[14], declutterData[15], declutterData[16],
-                  declutterData[11], declutterData[12]);
-              }
-              drawImage.apply(undefined, declutterData);
+            const context = declutterData[0];
+            const currentAlpha = context.globalAlpha;
+            if (currentAlpha !== opacity) {
+              context.globalAlpha = opacity;
+            }
+            if (declutterData.length > 11) {
+              this.replayTextBackground_(declutterData[0],
+                declutterData[13], declutterData[14], declutterData[15], declutterData[16],
+                declutterData[11], declutterData[12]);
+            }
+            drawImage.apply(undefined, declutterData);
+            if (currentAlpha !== opacity) {
+              context.globalAlpha = currentAlpha;
             }
           }
         }
@@ -443,6 +461,7 @@ class Executor extends Disposable {
         createOrUpdateEmpty(declutterGroup);
       }
     }
+    return declutterTree;
   }
 
   /**
@@ -464,7 +483,9 @@ class Executor extends Disposable {
     const baseline = TEXT_ALIGN[textState.textBaseline || defaultTextBaseline];
     const strokeWidth = strokeState && strokeState.lineWidth ? strokeState.lineWidth : 0;
 
-    const anchorX = align * label.width / pixelRatio + 2 * (0.5 - align) * strokeWidth;
+    // Remove the 2 pixels we added in getTextImage() for the anchor
+    const width = label.width / pixelRatio - 2 * textState.scale;
+    const anchorX = align * width + 2 * (0.5 - align) * strokeWidth;
     const anchorY = baseline * label.height / pixelRatio + 2 * (0.5 - baseline) * strokeWidth;
 
     return {
@@ -478,8 +499,6 @@ class Executor extends Disposable {
    * @private
    * @param {CanvasRenderingContext2D} context Context.
    * @param {import("../../transform.js").Transform} transform Transform.
-   * @param {Object<string, boolean>} skippedFeaturesHash Ids of features
-   *     to skip.
    * @param {Array<*>} instructions Instructions array.
    * @param {boolean} snapToPixel Snap point symbols and text to integer pixels.
    * @param {function(import("../../Feature.js").FeatureLike): T|undefined} featureCallback Feature callback.
@@ -491,12 +510,12 @@ class Executor extends Disposable {
   execute_(
     context,
     transform,
-    skippedFeaturesHash,
     instructions,
     snapToPixel,
     featureCallback,
     opt_hitExtent
   ) {
+    this.declutterItems.length = 0;
     /** @type {Array<number>} */
     let pixelCoordinates;
     if (this.pixelCoordinates_ && equals(transform, this.renderedTransform_)) {
@@ -510,12 +529,11 @@ class Executor extends Disposable {
         transform, this.pixelCoordinates_);
       transformSetFromArray(this.renderedTransform_, transform);
     }
-    const skipFeatures = !isEmpty(skippedFeaturesHash);
     let i = 0; // instruction index
     const ii = instructions.length; // end of instructions
     let d = 0; // data index
     let dd; // end of per-instruction data
-    let anchorX, anchorY, prevX, prevY, roundX, roundY, declutterGroup, image, text, textKey;
+    let anchorX, anchorY, prevX, prevY, roundX, roundY, declutterGroup, declutterGroups, image, text, textKey;
     let strokeKey, fillKey;
     let pendingFill = 0;
     let pendingStroke = 0;
@@ -523,6 +541,7 @@ class Executor extends Disposable {
     let lastStrokeInstruction = null;
     const coordinateCache = this.coordinateCache_;
     const viewRotation = this.viewRotation_;
+    const viewRotationFromTransform = Math.round(Math.atan2(-transform[1], transform[0]) * 1e12) / 1e12;
 
     const state = /** @type {import("../../render.js").State} */ ({
       context: context,
@@ -542,10 +561,9 @@ class Executor extends Disposable {
       switch (type) {
         case CanvasInstruction.BEGIN_GEOMETRY:
           feature = /** @type {import("../../Feature.js").FeatureLike} */ (instruction[1]);
-          if ((skipFeatures && skippedFeaturesHash[getUid(feature)]) || !feature.getGeometry()) {
+          if (!feature.getGeometry()) {
             i = /** @type {number} */ (instruction[2]);
-          } else if (opt_hitExtent !== undefined && !intersects(
-            opt_hitExtent, feature.getGeometry().getExtent())) {
+          } else if (opt_hitExtent !== undefined && !intersects(opt_hitExtent, instruction[3])) {
             i = /** @type {number} */ (instruction[2]) + 1;
           } else {
             ++i;
@@ -562,7 +580,8 @@ class Executor extends Disposable {
           }
           if (!pendingFill && !pendingStroke) {
             context.beginPath();
-            prevX = prevY = NaN;
+            prevX = NaN;
+            prevY = NaN;
           }
           ++i;
           break;
@@ -613,7 +632,7 @@ class Executor extends Disposable {
           // Remaining arguments in DRAW_IMAGE are in alphabetical order
           anchorX = /** @type {number} */ (instruction[4]);
           anchorY = /** @type {number} */ (instruction[5]);
-          declutterGroup = featureCallback ? null : /** @type {import("../canvas.js").DeclutterGroup} */ (instruction[6]);
+          declutterGroups = featureCallback ? null : instruction[6];
           let height = /** @type {number} */ (instruction[7]);
           const opacity = /** @type {number} */ (instruction[8]);
           const originX = /** @type {number} */ (instruction[9]);
@@ -623,7 +642,6 @@ class Executor extends Disposable {
           const scale = /** @type {number} */ (instruction[13]);
           let width = /** @type {number} */ (instruction[14]);
 
-
           if (!image && instruction.length >= 19) {
             // create label images
             text = /** @type {string} */ (instruction[18]);
@@ -631,13 +649,18 @@ class Executor extends Disposable {
             strokeKey = /** @type {string} */ (instruction[20]);
             fillKey = /** @type {string} */ (instruction[21]);
             const labelWithAnchor = this.drawTextImageWithPointPlacement_(text, textKey, strokeKey, fillKey);
-            image = instruction[3] = labelWithAnchor.label;
+            image = labelWithAnchor.label;
+            instruction[3] = image;
             const textOffsetX = /** @type {number} */ (instruction[22]);
-            anchorX = instruction[4] = (labelWithAnchor.anchorX - textOffsetX) * this.pixelRatio;
+            anchorX = (labelWithAnchor.anchorX - textOffsetX) * this.pixelRatio;
+            instruction[4] = anchorX;
             const textOffsetY = /** @type {number} */ (instruction[23]);
-            anchorY = instruction[5] = (labelWithAnchor.anchorY - textOffsetY) * this.pixelRatio;
-            height = instruction[7] = image.height;
-            width = instruction[14] = image.width;
+            anchorY = (labelWithAnchor.anchorY - textOffsetY) * this.pixelRatio;
+            instruction[5] = anchorY;
+            height = image.height;
+            instruction[7] = height;
+            width = image.width;
+            instruction[14] = width;
           }
 
           let geometryWidths;
@@ -652,16 +675,31 @@ class Executor extends Disposable {
             backgroundStroke = /** @type {boolean} */ (instruction[17]);
           } else {
             padding = defaultPadding;
-            backgroundFill = backgroundStroke = false;
+            backgroundFill = false;
+            backgroundStroke = false;
           }
 
-          if (rotateWithView) {
+          if (rotateWithView && viewRotationFromTransform) {
+            // Canvas is expected to be rotated to reverse view rotation.
             rotation += viewRotation;
+          } else if (!rotateWithView && !viewRotationFromTransform) {
+            // Canvas is not rotated, images need to be rotated back to be north-up.
+            rotation -= viewRotation;
           }
           let widthIndex = 0;
+          let declutterGroupIndex = 0;
           for (; d < dd; d += 2) {
             if (geometryWidths && geometryWidths[widthIndex++] < width / this.pixelRatio) {
               continue;
+            }
+            if (declutterGroups) {
+              const index = Math.floor(declutterGroupIndex);
+              if (declutterGroups.length < index + 1) {
+                declutterGroup = createEmpty();
+                declutterGroup.push(declutterGroups[0][4]);
+                declutterGroups.push(declutterGroup);
+              }
+              declutterGroup = declutterGroups[index];
             }
             this.replayImage_(context,
               pixelCoordinates[d], pixelCoordinates[d + 1], image, anchorX, anchorY,
@@ -669,15 +707,21 @@ class Executor extends Disposable {
               snapToPixel, width, padding,
               backgroundFill ? /** @type {Array<*>} */ (lastFillInstruction) : null,
               backgroundStroke ? /** @type {Array<*>} */ (lastStrokeInstruction) : null);
+            if (declutterGroup) {
+              if (declutterGroupIndex === Math.floor(declutterGroupIndex)) {
+                this.declutterItems.push(this, declutterGroup, feature);
+              }
+              declutterGroupIndex += 1 / declutterGroup[4];
+
+            }
           }
-          this.renderDeclutter_(declutterGroup, feature);
           ++i;
           break;
         case CanvasInstruction.DRAW_CHARS:
           const begin = /** @type {number} */ (instruction[1]);
           const end = /** @type {number} */ (instruction[2]);
           const baseline = /** @type {number} */ (instruction[3]);
-          declutterGroup = featureCallback ? null : /** @type {import("../canvas.js").DeclutterGroup} */ (instruction[4]);
+          declutterGroup = featureCallback ? null : instruction[4];
           const overflow = /** @type {number} */ (instruction[5]);
           fillKey = /** @type {string} */ (instruction[6]);
           const maxAngle = /** @type {number} */ (instruction[7]);
@@ -697,7 +741,8 @@ class Executor extends Disposable {
           if (font in this.widths_) {
             cachedWidths = this.widths_[font];
           } else {
-            cachedWidths = this.widths_[font] = {};
+            cachedWidths = {};
+            this.widths_[font] = cachedWidths;
           }
 
           const pathLength = lineStringLength(pixelCoordinates, begin, end, 2);
@@ -739,7 +784,7 @@ class Executor extends Disposable {
               }
             }
           }
-          this.renderDeclutter_(declutterGroup, feature);
+          this.declutterItems.push(this, declutterGroup, feature);
           ++i;
           break;
         case CanvasInstruction.END_GEOMETRY:
@@ -836,22 +881,17 @@ class Executor extends Disposable {
    * @param {CanvasRenderingContext2D} context Context.
    * @param {import("../../transform.js").Transform} transform Transform.
    * @param {number} viewRotation View rotation.
-   * @param {Object<string, boolean>} skippedFeaturesHash Ids of features
-   *     to skip.
    * @param {boolean} snapToPixel Snap point symbols and text to integer pixels.
    */
-  execute(context, transform, viewRotation, skippedFeaturesHash, snapToPixel) {
+  execute(context, transform, viewRotation, snapToPixel) {
     this.viewRotation_ = viewRotation;
-    this.execute_(context, transform,
-      skippedFeaturesHash, this.instructions, snapToPixel, undefined, undefined);
+    this.execute_(context, transform, this.instructions, snapToPixel, undefined, undefined);
   }
 
   /**
    * @param {CanvasRenderingContext2D} context Context.
    * @param {import("../../transform.js").Transform} transform Transform.
    * @param {number} viewRotation View rotation.
-   * @param {Object<string, boolean>} skippedFeaturesHash Ids of features
-   *     to skip.
    * @param {function(import("../../Feature.js").FeatureLike): T=} opt_featureCallback
    *     Feature callback.
    * @param {import("../../extent.js").Extent=} opt_hitExtent Only check features that intersect this
@@ -863,12 +903,11 @@ class Executor extends Disposable {
     context,
     transform,
     viewRotation,
-    skippedFeaturesHash,
     opt_featureCallback,
     opt_hitExtent
   ) {
     this.viewRotation_ = viewRotation;
-    return this.execute_(context, transform, skippedFeaturesHash,
+    return this.execute_(context, transform,
       this.hitDetectionInstructions, true, opt_featureCallback, opt_hitExtent);
   }
 }

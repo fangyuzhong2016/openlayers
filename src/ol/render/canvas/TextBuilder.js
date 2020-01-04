@@ -14,18 +14,19 @@ import TextPlacement from '../../style/TextPlacement.js';
  * @const
  * @enum {number}
  */
-export const TEXT_ALIGN = {};
-TEXT_ALIGN['left'] = 0;
-TEXT_ALIGN['end'] = 0;
-TEXT_ALIGN['center'] = 0.5;
-TEXT_ALIGN['right'] = 1;
-TEXT_ALIGN['start'] = 1;
-TEXT_ALIGN['top'] = 0;
-TEXT_ALIGN['middle'] = 0.5;
-TEXT_ALIGN['hanging'] = 0.2;
-TEXT_ALIGN['alphabetic'] = 0.8;
-TEXT_ALIGN['ideographic'] = 0.8;
-TEXT_ALIGN['bottom'] = 1;
+export const TEXT_ALIGN = {
+  'left': 0,
+  'end': 0,
+  'center': 0.5,
+  'right': 1,
+  'start': 1,
+  'top': 0,
+  'middle': 0.5,
+  'hanging': 0.2,
+  'alphabetic': 0.8,
+  'ideographic': 0.8,
+  'bottom': 1
+};
 
 
 class CanvasTextBuilder extends CanvasBuilder {
@@ -40,9 +41,9 @@ class CanvasTextBuilder extends CanvasBuilder {
 
     /**
      * @private
-     * @type {import("../canvas.js").DeclutterGroup}
+     * @type {import("../canvas.js").DeclutterGroups}
      */
-    this.declutterGroup_;
+    this.declutterGroups_;
 
     /**
      * @private
@@ -184,7 +185,7 @@ class CanvasTextBuilder extends CanvasBuilder {
           ends.push(endss[i][0]);
         }
       }
-      this.beginGeometry(feature);
+      this.beginGeometry(geometry, feature);
       const textAlign = textState.textAlign;
       let flatOffset = 0;
       let flatEnd;
@@ -201,7 +202,10 @@ class CanvasTextBuilder extends CanvasBuilder {
         }
         end = this.coordinates.length;
         flatOffset = ends[o];
-        this.drawChars_(begin, end, this.declutterGroup_);
+        const declutterGroup = this.declutterGroups_ ?
+          (o === 0 ? this.declutterGroups_[0] : [].concat(this.declutterGroups_[0])) :
+          null;
+        this.drawChars_(begin, end, declutterGroup);
         begin = end;
       }
       this.endGeometry(feature);
@@ -267,14 +271,14 @@ class CanvasTextBuilder extends CanvasBuilder {
         }
       }
 
-      this.beginGeometry(feature);
+      this.beginGeometry(geometry, feature);
 
       // The image is unknown at this stage so we pass null; it will be computed at render time.
       // For clarity, we pass NaN for offsetX, offsetY, width and height, which will be computed at
       // render time.
       const pixelRatio = this.pixelRatio;
       this.instructions.push([CanvasInstruction.DRAW_IMAGE, begin, end,
-        null, NaN, NaN, this.declutterGroup_, NaN, 1, 0, 0,
+        null, NaN, NaN, this.declutterGroups_, NaN, 1, 0, 0,
         this.textRotateWithView_, this.textRotation_, 1, NaN,
         textState.padding == defaultPadding ?
           defaultPadding : textState.padding.map(function(p) {
@@ -285,7 +289,7 @@ class CanvasTextBuilder extends CanvasBuilder {
         this.textOffsetX_, this.textOffsetY_, geometryWidths
       ]);
       this.hitDetectionInstructions.push([CanvasInstruction.DRAW_IMAGE, begin, end,
-        null, NaN, NaN, this.declutterGroup_, NaN, 1, 0, 0,
+        null, NaN, NaN, this.declutterGroups_, NaN, 1, 0, 0,
         this.textRotateWithView_, this.textRotation_, 1 / this.pixelRatio, NaN,
         textState.padding,
         !!textState.backgroundFill, !!textState.backgroundStroke,
@@ -379,20 +383,22 @@ class CanvasTextBuilder extends CanvasBuilder {
   /**
    * @inheritDoc
    */
-  setTextStyle(textStyle, declutterGroup) {
+  setTextStyle(textStyle, declutterGroups) {
     let textState, fillState, strokeState;
     if (!textStyle) {
       this.text_ = '';
     } else {
-      this.declutterGroup_ = /** @type {import("../canvas.js").DeclutterGroup} */ (declutterGroup);
+      this.declutterGroups_ = /** @type {import("../canvas.js").DeclutterGroups} */ (declutterGroups);
 
       const textFillStyle = textStyle.getFill();
       if (!textFillStyle) {
-        fillState = this.textFillState_ = null;
+        fillState = null;
+        this.textFillState_ = fillState;
       } else {
         fillState = this.textFillState_;
         if (!fillState) {
-          fillState = this.textFillState_ = /** @type {import("../canvas.js").FillState} */ ({});
+          fillState = /** @type {import("../canvas.js").FillState} */ ({});
+          this.textFillState_ = fillState;
         }
         fillState.fillStyle = asColorLike(
           textFillStyle.getColor() || defaultFillStyle);
@@ -400,11 +406,13 @@ class CanvasTextBuilder extends CanvasBuilder {
 
       const textStrokeStyle = textStyle.getStroke();
       if (!textStrokeStyle) {
-        strokeState = this.textStrokeState_ = null;
+        strokeState = null;
+        this.textStrokeState_ = strokeState;
       } else {
         strokeState = this.textStrokeState_;
         if (!strokeState) {
-          strokeState = this.textStrokeState_ = /** @type {import("../canvas.js").StrokeState} */ ({});
+          strokeState = /** @type {import("../canvas.js").StrokeState} */ ({});
+          this.textStrokeState_ = strokeState;
         }
         const lineDash = textStrokeStyle.getLineDash();
         const lineDashOffset = textStrokeStyle.getLineDashOffset();
